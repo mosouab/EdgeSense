@@ -35,7 +35,7 @@ To validate the core mathematical and architectural concepts, this repository co
 
 This project is grounded in recent advancements in unsupervised time-series anomaly detection and edge computing:
 
-* **USAD (Unsupervised Anomaly Detection via Adversarial Training):** Audibert et al. (2020) proposed a novel architecture combining autoencoders with adversarial training, providing fast, robust training suitable for edge devices. This project takes architectural inspiration from their encoder-decoder approach to handle sensor noise. [Read Paper](https://dl.acm.org/doi/10.1145/3394486.3403392)
+* **USAD (Unsupervised Anomaly Detection via Adversarial Training):** Audibert et al. (2020) proposed a novel architecture combining autoencoders with adversarial training, providing fast, robust training suitable for edge devices. This project takes architectural inspiration from their encoder-decoder approach to handle sensor noise. [Read Paper](https://www.eurecom.fr/publication/6271/download/data-publi-6271_1.pdf)
 * **Deep Learning for Time Series Classification and Clustering:** Fawaz et al. (2019) outline the efficacy of 1D-CNNs for capturing temporal relationships in multivariate datasets without the computational overhead of recurrent networks (LSTMs). [Read Paper](https://arxiv.org/abs/1809.04356)
 * **Predictive Maintenance in Industry 4.0:** An overview of the shift from cloud-centric to edge-native computing for critical industrial infrastructure, emphasizing the necessity of protocol-agnostic data ingestion (OPC UA).
 * **Concept Drift in Machine Learning:** Addressing the challenge of adapting models over time as the physical dynamics of the monitored system naturally degrade.

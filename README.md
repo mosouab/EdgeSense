@@ -1,4 +1,4 @@
-# EDGESENSE: Edge-Native Multi-Modal Anomaly Detection
+# EdgeSense: Edge-Native Multi-Modal Anomaly Detection
 
 This project bridges low-level industrial data streams and high-level artificial intelligence to provide a localized, plug-and-play predictive maintenance solution. It is designed to learn the baseline physics of complex machinery directly on the edge, without requiring cloud connectivity or labeled failure data.
 

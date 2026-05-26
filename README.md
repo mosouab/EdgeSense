@@ -19,9 +19,9 @@ Using an unsupervised **Variational Autoencoder (VAE)** running on an edge devic
 
 When a mechanical fault begins to develop, the sensor data shifts. The Autoencoder fails to reconstruct this unfamiliar data, causing the Mean Squared Error (MSE) to spike:
 
-$$\mathcal{L} = \frac{1}{N} \sum_{i=1}^{N} (x_i - \hat{x}_i)^2$$
+$$\\mathcal{L} = \\frac{1}{N} \\sum_{i=1}^{N} (x_i - \\hat{x}_i)^2$$
 
-Once $\mathcal{L}$ crosses an autonomously calculated threshold, the system flags an anomaly. 
+Once $\\mathcal{L}$ crosses an autonomously calculated threshold, the system flags an anomaly. 
 
 ## 🏗️ What We Are Building (Summer POC Scope)
 
@@ -30,6 +30,17 @@ To validate the core mathematical and architectural concepts, this repository co
 1. **Multi-Modal Data Simulation:** Using the Metro.PT (Air Compressor) dataset, we simulate a live industrial data stream. A publisher script broadcasts multivariate time-series data (current, pressure, temperature) over a local network mimicking an industrial fieldbus.
 2. **The 1D-CNN Autoencoder:** A PyTorch-based Convolutional Neural Network designed to handle overlapping time-windows of sensor data, capturing both temporal dynamics and cross-sensor correlations.
 3. **Continuous Inference:** A real-time listener node that ingests the live stream, passes it through the trained Autoencoder, and visualizes the reconstruction error dynamically in the terminal.
+
+## ✅ TODO (POC Pipeline)
+
+- [x] Ingest Metro.PT dataset
+- [x] Build preprocessing pipeline (scaling, missing values)
+- [x] Create sliding windows
+- [ ] Implement 1D-CNN USAD model
+- [ ] Implement USAD training loop
+- [ ] Define anomaly scoring & thresholding
+- [ ] Evaluate on anomaly segments
+- [ ] Package edge inference pipeline
 
 ## 📚 Literature & State-of-the-Art (SOTA)
 

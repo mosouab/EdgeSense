@@ -4,14 +4,14 @@ This project bridges low-level industrial data streams and high-level artificial
 
 ---
 
-## 🎯 The Problem
+## The Problem
 
 Modern industrial predictive maintenance solutions suffer from three critical bottlenecks:
 1. **Data Privacy & Latency:** Streaming terabytes of high-frequency sensor data (vibration, current, pressure) to the cloud exposes proprietary factory operations and introduces network latency.
 2. **The "Data Science" Friction:** Most models require supervised training, meaning data scientists must manually label thousands of hours of data to teach a model what a "failure" looks like.
 3. **Concept Drift:** As machines naturally age (e.g., belts stretch, gears wear), their baseline operational data shifts. Static cloud models quickly become obsolete, triggering false positive alarms.
 
-## 💡 The Solution
+## The Solution
 
 NeuroEdge flips the paradigm by bringing the training phase directly to the machine. 
 
@@ -23,7 +23,7 @@ $$\\mathcal{L} = \\frac{1}{N} \\sum_{i=1}^{N} (x_i - \\hat{x}_i)^2$$
 
 Once $\\mathcal{L}$ crosses an autonomously calculated threshold, the system flags an anomaly. 
 
-## 🏗️ What We Are Building (Summer POC Scope)
+## What We Are Building (Summer POC Scope)
 
 To validate the core mathematical and architectural concepts, this repository contains a simulated pipeline built in Python and PyTorch.
 
@@ -31,7 +31,7 @@ To validate the core mathematical and architectural concepts, this repository co
 2. **The 1D-CNN Autoencoder:** A PyTorch-based Convolutional Neural Network designed to handle overlapping time-windows of sensor data, capturing both temporal dynamics and cross-sensor correlations.
 3. **Continuous Inference:** A real-time listener node that ingests the live stream, passes it through the trained Autoencoder, and visualizes the reconstruction error dynamically in the terminal.
 
-## ✅ TODO (POC Pipeline)
+## TODO (POC Pipeline)
 
 - [x] Ingest Metro.PT dataset
 - [x] Build preprocessing pipeline (scaling, missing values)
@@ -42,7 +42,7 @@ To validate the core mathematical and architectural concepts, this repository co
 - [ ] Evaluate on anomaly segments
 - [ ] Package edge inference pipeline
 
-## 📚 Literature & State-of-the-Art (SOTA)
+## Literature & State-of-the-Art (SOTA)
 
 This project is grounded in recent advancements in unsupervised time-series anomaly detection and edge computing:
 

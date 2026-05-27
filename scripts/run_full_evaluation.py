@@ -40,9 +40,12 @@ from edgesense.windowing import build_window_mask, create_sliding_windows
 def main() -> None:
     """Train USAD, evaluate, and generate artifacts."""
 
+    print("--- EdgeSense Full Evaluation Pipeline ---")
+    
     output_dir = Path("reports") / "full_evaluation"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    print("[1/6] Loading and Preprocessing data...")
     dataset = load_metropt_dataset()
     failures = load_failure_reports()
 

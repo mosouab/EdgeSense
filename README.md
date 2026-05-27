@@ -31,17 +31,17 @@ To validate the core mathematical and architectural concepts, this repository co
 2. **The 1D-CNN Autoencoder:** A PyTorch-based Convolutional Neural Network designed to handle overlapping time-windows of sensor data, capturing both temporal dynamics and cross-sensor correlations.
 3. **Continuous Inference:** A real-time listener node that ingests the live stream, passes it through the trained Autoencoder, and visualizes the reconstruction error dynamically in the terminal.
 
-## 🧠 Architecture
+## Architecture
 
 ![USAD 1D-CNN Architecture](figures/architecture.png)
 
-## 📈 Training Diagnostics
+## Training Diagnostics
 
 ![Training Loss Curves](figures/training_losses.png)
 
 ![Latent Space Projection (PCA)](figures/latent_pca.png)
 
-## ✅ TODO (POC Pipeline)
+## TODO (POC Pipeline)
 
 - [x] Ingest Metro.PT dataset
 - [x] Build preprocessing pipeline (scaling, missing values)

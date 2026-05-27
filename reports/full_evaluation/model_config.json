@@ -1,0 +1,8 @@
+{
+  "in_features": 15,
+  "base_channels": 32,
+  "latent_channels": 64,
+  "kernel_size": 3,
+  "downsample_layers": 2,
+  "dropout": 0.0
+}

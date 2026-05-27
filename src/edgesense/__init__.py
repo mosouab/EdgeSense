@@ -23,7 +23,19 @@ from .training import (
     train_usad_with_validation,
 )
 from .scoring import ScoringConfig, ThresholdConfig, compute_threshold, compute_usad_scores, flag_anomalies
-from .evaluation import EvaluationMetrics, EvaluationResult, evaluate_anomaly_detection, label_windows_by_failures
+from .evaluation import (
+    EvaluationMetrics,
+    EvaluationResult,
+    PointAdjustedMetrics,
+    PRThresholdResult,
+    apply_median_filter,
+    compute_optimal_f1_threshold,
+    evaluate_anomaly_detection,
+    evaluate_anomaly_detection_pr,
+    label_windows_by_failures,
+    apply_temporal_persistence,
+    point_adjust_predictions,
+)
 
 __all__ = [
     "MetroPTDataset",
@@ -56,6 +68,13 @@ __all__ = [
     "flag_anomalies",
     "EvaluationMetrics",
     "EvaluationResult",
+    "PointAdjustedMetrics",
+    "PRThresholdResult",
+    "apply_median_filter",
+    "compute_optimal_f1_threshold",
     "evaluate_anomaly_detection",
+    "evaluate_anomaly_detection_pr",
     "label_windows_by_failures",
+    "apply_temporal_persistence",
+    "point_adjust_predictions",
 ]

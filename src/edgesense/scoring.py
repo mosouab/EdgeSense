@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from .models import USADConv1d
 from .training import create_dataloader
@@ -22,8 +23,8 @@ class ScoringConfig:
         device: Device used for scoring.
     """
 
-    alpha: float = 0.5
-    beta: float = 0.5
+    alpha: float = 0.3
+    beta: float = 0.7
     batch_size: int = 256
     device: str = "cpu"
 
@@ -90,7 +91,7 @@ def compute_usad_scores(
 
     scores: list[float] = []
     with torch.no_grad():
-        for (batch_windows,) in dataloader:
+        for (batch_windows,) in tqdm(dataloader, desc="Scoring windows", leave=False):
             batch_windows = batch_windows.to(config.device)
             recon1, _, _ = model(batch_windows)
             recon2_from_recon1 = model.reconstruct_via_decoder2(recon1)

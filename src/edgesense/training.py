@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 from .models import USADConv1d
 
@@ -118,6 +119,7 @@ def train_usad(
     windows: np.ndarray,
     config: TrainingConfig,
     device: torch.device | str = "cpu",
+    show_progress: bool = True,
 ) -> TrainingHistory:
     """Train USAD with the two-phase loss schedule described in the paper.
 
@@ -130,6 +132,7 @@ def train_usad(
         windows: Windowed dataset of shape (num_windows, window_size, num_features).
         config: Training configuration.
         device: Training device.
+        show_progress: Whether to show tqdm progress bars.
 
     Returns:
         TrainingHistory with AE1 and AE2 losses per epoch.
@@ -155,7 +158,8 @@ def train_usad(
     ae1_epoch_losses: list[float] = []
     ae2_epoch_losses: list[float] = []
 
-    for epoch in range(1, config.epochs + 1):
+    pbar_epoch = tqdm(range(1, config.epochs + 1), desc="Training USAD", disable=not show_progress)
+    for epoch in pbar_epoch:
         w_rec = 1.0 / float(epoch)
         w_adv = 1.0 - w_rec
 
@@ -163,7 +167,8 @@ def train_usad(
         ae2_running = 0.0
         batch_count = 0
 
-        for (batch_windows,) in dataloader:
+        pbar_batch = tqdm(dataloader, desc=f"Epoch {epoch}", leave=False, disable=not show_progress)
+        for (batch_windows,) in pbar_batch:
             batch_windows = batch_windows.to(device)
 
             # Phase 1/2: update AE1 (encoder + decoder1)
@@ -222,7 +227,8 @@ def train_usad_with_validation(
     model = model.to(device)
     mse = nn.MSELoss()
 
-    for epoch in range(1, early_stopping.max_epochs + 1):
+    pbar = tqdm(range(1, early_stopping.max_epochs + 1), desc="Training with Validation")
+    for epoch in pbar:
         epoch_config = TrainingConfig(
             batch_size=train_config.batch_size,
             epochs=1,
@@ -232,12 +238,14 @@ def train_usad_with_validation(
             shuffle=train_config.shuffle,
             drop_last=train_config.drop_last,
         )
-        epoch_history = train_usad(model, train_windows, epoch_config, device=device)
+        epoch_history = train_usad(model, train_windows, epoch_config, device=device, show_progress=False)
         history.ae1_losses.append(epoch_history.ae1_losses[-1])
         history.ae2_losses.append(epoch_history.ae2_losses[-1])
 
         val_loss = _evaluate_reconstruction_loss(model, val_windows, train_config.batch_size, device)
         history.val_recon_losses.append(val_loss)
+
+        pbar.set_postfix({"AE1": f"{history.ae1_losses[-1]:.4f}", "Val": f"{val_loss:.4f}"})
 
         if best_val - val_loss >= early_stopping.min_delta:
             best_val = val_loss
@@ -246,6 +254,7 @@ def train_usad_with_validation(
             patience_counter += 1
 
         if patience_counter >= early_stopping.patience:
+            pbar.set_description("Early stopping triggered")
             break
 
     return history

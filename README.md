@@ -32,6 +32,11 @@ The following timeline illustrates the model's binary predictions compared to th
 
 ![Binary Fault Timeline](figures/binary_fault_timeline.png)
 
+### High-Resolution Event Analysis
+A detailed view of the June Air Leak event (below) demonstrates the model's low-latency detection capabilities, flagging the mechanical shift shortly after the fault interval begins.
+
+![June Failure Zoom](figures/june_failure_zoom.png)
+
 ## Pipeline Status
 - [x] Multi-modal sensor ingestion
 - [x] Autonomous healthy-state calibration

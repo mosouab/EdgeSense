@@ -28,9 +28,9 @@ The latent space projection confirms the model's ability to compress high-dimens
 
 ![Latent Space PCA](reports/full_evaluation/latent_pca.png)
 
-The following timeline illustrates the stability of the system's baseline and the clear detection of the labeled failure intervals.
+The following timeline illustrates the model's binary predictions compared to the labeled failure intervals, demonstrating the 100% recall of critical events.
 
-![Anomaly Timeline](reports/full_evaluation/anomaly_score_timeline.png)
+![Binary Fault Timeline](figures/binary_fault_timeline.png)
 
 ## Pipeline Status
 - [x] Multi-modal sensor ingestion

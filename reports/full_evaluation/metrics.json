@@ -1,0 +1,49 @@
+{
+  "optimal_threshold": 0.024024931713938713,
+  "raw": {
+    "precision": 0.2949169602415702,
+    "recall": 0.9654036243822076,
+    "f1": 0.4518118735543562,
+    "accuracy": 0.9531265451428949,
+    "auc": 0.9694136575694152
+  },
+  "point_adjusted": {
+    "precision": 0.30229083665338646,
+    "recall": 1.0,
+    "f1": 0.464244741873805,
+    "accuracy": 0.9538187691597719,
+    "auc": null
+  },
+  "persistence": {
+    "precision": 0.3772609819121447,
+    "recall": 0.9621087314662273,
+    "f1": 0.5419953596287703,
+    "accuracy": 0.9674654712067772,
+    "auc": null
+  },
+  "persistence_point_adjusted": {
+    "precision": 0.3863781031190325,
+    "recall": 1.0,
+    "f1": 0.5573921028466483,
+    "accuracy": 0.9682236213204998,
+    "auc": null
+  },
+  "training": {
+    "epochs": 50,
+    "final_ae1_loss": 0.008304052157864835,
+    "final_ae2_loss": 0.010573069162022036,
+    "final_val_recon_loss": 0.007724176975898445
+  },
+  "windowing": {
+    "window_size": 100,
+    "stride": 50
+  },
+  "score_smoothing": {
+    "median_window": 11
+  },
+  "temporal_persistence": {
+    "min_consecutive": 25
+  },
+  "train_windows": 29730,
+  "eval_windows": 30337
+}

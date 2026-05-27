@@ -37,15 +37,6 @@ A detailed view of the June Air Leak event (below) demonstrates the model's low-
 
 ![June Failure Zoom](figures/june_failure_zoom.png)
 
-## Pipeline Status
-- [x] Multi-modal sensor ingestion
-- [x] Autonomous healthy-state calibration
-- [x] 1D-CNN USAD model implementation
-- [x] Adversarial training loop with real-time progress tracking
-- [x] Temporal persistence and median-smoothed scoring
-- [x] Evaluation and threshold optimization
-- [ ] Final edge inference packaging
-
 ## Literature & State-of-the-Art (SOTA)
 This project is grounded in recent advancements in unsupervised time-series anomaly detection and edge computing:
 

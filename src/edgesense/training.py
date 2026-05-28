@@ -26,6 +26,12 @@ class TrainingConfig:
         seed: Random seed for deterministic training.
         shuffle: Whether to shuffle windows each epoch.
         drop_last: Whether to drop the last partial batch.
+        adv_ramp_epochs: Number of epochs over which w_adv ramps linearly from 0 to its cap.
+            The original USAD `w_adv = 1 - 1/epoch` schedule grows too fast on small datasets
+            and the encoder destabilizes before the adversarial phase. A linear ramp + cap
+            keeps the reconstruction objective dominant long enough to converge first.
+        adv_max_weight: Upper bound on w_adv (so w_rec >= 1 - adv_max_weight is always active).
+        grad_clip_norm: Max L2 norm for gradient clipping (None disables clipping).
     """
 
     batch_size: int = 128
@@ -35,6 +41,9 @@ class TrainingConfig:
     seed: int = 42
     shuffle: bool = True
     drop_last: bool = True
+    adv_ramp_epochs: int = 20
+    adv_max_weight: float = 0.5
+    grad_clip_norm: float | None = 1.0
 
 
 @dataclass(frozen=True)
@@ -120,6 +129,8 @@ def train_usad(
     config: TrainingConfig,
     device: torch.device | str = "cpu",
     show_progress: bool = True,
+    val_windows: np.ndarray | None = None,
+    early_stopping: EarlyStoppingConfig | None = None,
 ) -> TrainingHistory:
     """Train USAD with the two-phase loss schedule described in the paper.
 
@@ -127,16 +138,26 @@ def train_usad(
       - w_rec = 1 / epoch
       - w_adv = 1 - 1 / epoch
 
+    Optimizer state and the data loader are created once and reused across
+    every epoch, so Adam moments and shuffle order are preserved end-to-end.
+
     Args:
         model: USADConv1d model instance.
-        windows: Windowed dataset of shape (num_windows, window_size, num_features).
-        config: Training configuration.
+        windows: Windowed training dataset of shape (num_windows, window_size, num_features).
+        config: Training configuration. `config.epochs` is used when `early_stopping` is None.
         device: Training device.
         show_progress: Whether to show tqdm progress bars.
+        val_windows: Optional validation windows for tracking val reconstruction loss.
+        early_stopping: Optional early-stopping config. When provided, training runs
+            for up to `early_stopping.max_epochs` and stops once `val_recon_loss`
+            fails to improve by `min_delta` for `patience` epochs. Requires `val_windows`.
 
     Returns:
-        TrainingHistory with AE1 and AE2 losses per epoch.
+        TrainingHistory with AE1, AE2, and (if val_windows) validation losses per epoch.
     """
+
+    if early_stopping is not None and val_windows is None:
+        raise ValueError("early_stopping requires val_windows to be provided.")
 
     seed_all(config.seed)
     model = model.to(device)
@@ -157,12 +178,24 @@ def train_usad(
 
     ae1_epoch_losses: list[float] = []
     ae2_epoch_losses: list[float] = []
+    val_recon_losses: list[float] | None = [] if val_windows is not None else None
 
-    pbar_epoch = tqdm(range(1, config.epochs + 1), desc="Training USAD", disable=not show_progress)
+    max_epochs = early_stopping.max_epochs if early_stopping is not None else config.epochs
+    best_val = float("inf")
+    patience_counter = 0
+    best_state_dict: dict | None = None
+    best_epoch: int = 0
+
+    ramp_epochs = max(config.adv_ramp_epochs, 1)
+    adv_cap = float(config.adv_max_weight)
+    pbar_epoch = tqdm(range(1, max_epochs + 1), desc="Training USAD", disable=not show_progress)
     for epoch in pbar_epoch:
-        w_rec = 1.0 / float(epoch)
-        w_adv = 1.0 - w_rec
+        # Linear ramp of w_adv from 0 to adv_max_weight over ramp_epochs.
+        # Reconstruction always carries weight (1 - w_adv) >= (1 - adv_cap) > 0.
+        w_adv = min(float(epoch) / ramp_epochs, 1.0) * adv_cap
+        w_rec = 1.0 - w_adv
 
+        model.train()
         ae1_running = 0.0
         ae2_running = 0.0
         batch_count = 0
@@ -177,6 +210,8 @@ def train_usad(
             recon2_from_recon1 = model.reconstruct_via_decoder2(recon1)
             loss_ae1 = w_rec * mse(batch_windows, recon1) + w_adv * mse(batch_windows, recon2_from_recon1)
             loss_ae1.backward()
+            if config.grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(ae1_params, config.grad_clip_norm)
             optimizer_ae1.step()
 
             # Phase 2: update AE2 (encoder + decoder2)
@@ -185,6 +220,8 @@ def train_usad(
             recon2_from_recon1 = model.reconstruct_via_decoder2(recon1.detach())
             loss_ae2 = w_rec * mse(batch_windows, recon2) - w_adv * mse(batch_windows, recon2_from_recon1)
             loss_ae2.backward()
+            if config.grad_clip_norm is not None:
+                torch.nn.utils.clip_grad_norm_(ae2_params, config.grad_clip_norm)
             optimizer_ae2.step()
 
             ae1_running += loss_ae1.item()
@@ -194,7 +231,52 @@ def train_usad(
         ae1_epoch_losses.append(ae1_running / max(batch_count, 1))
         ae2_epoch_losses.append(ae2_running / max(batch_count, 1))
 
-    return TrainingHistory(ae1_losses=ae1_epoch_losses, ae2_losses=ae2_epoch_losses)
+        if val_windows is not None:
+            val_loss = _evaluate_reconstruction_loss(model, val_windows, config.batch_size, device)
+            val_recon_losses.append(val_loss)
+
+            # Track the best checkpoint by val_recon_loss so the saved model
+            # reflects the optimum, not whatever state we landed on at early-stop.
+            improved = val_loss < best_val
+            if improved:
+                best_val = val_loss
+                best_epoch = epoch
+                best_state_dict = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+
+            pbar_epoch.set_postfix(
+                {
+                    "w_adv": f"{w_adv:.2f}",
+                    "AE1": f"{ae1_epoch_losses[-1]:.4f}",
+                    "Val": f"{val_loss:.4f}",
+                    "Best": f"{best_val:.4f}@{best_epoch}",
+                }
+            )
+
+            if early_stopping is not None:
+                if improved and (best_val == val_loss):
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                if patience_counter >= early_stopping.patience:
+                    pbar_epoch.set_description("Early stopping triggered")
+                    break
+        else:
+            pbar_epoch.set_postfix(
+                {"w_adv": f"{w_adv:.2f}", "AE1": f"{ae1_epoch_losses[-1]:.4f}"}
+            )
+
+    # Restore best checkpoint so downstream scoring uses the optimum,
+    # not whatever (often degraded) state we landed on at early-stop time.
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
+
+    return TrainingHistory(
+        ae1_losses=ae1_epoch_losses,
+        ae2_losses=ae2_epoch_losses,
+        val_recon_losses=val_recon_losses,
+    )
 
 
 def train_usad_with_validation(
@@ -205,6 +287,8 @@ def train_usad_with_validation(
     device: torch.device | str = "cpu",
 ) -> TrainingHistory:
     """Train USAD with early stopping based on validation reconstruction loss.
+
+    Thin wrapper that splits `windows` into train/val and delegates to `train_usad`.
 
     Args:
         model: USADConv1d model instance.
@@ -217,47 +301,16 @@ def train_usad_with_validation(
         TrainingHistory including validation reconstruction losses.
     """
 
-    seed_all(train_config.seed)
     train_windows, val_windows = split_train_validation(windows, early_stopping.val_fraction)
-
-    history = TrainingHistory(ae1_losses=[], ae2_losses=[], val_recon_losses=[])
-    best_val = float("inf")
-    patience_counter = 0
-
-    model = model.to(device)
-    mse = nn.MSELoss()
-
-    pbar = tqdm(range(1, early_stopping.max_epochs + 1), desc="Training with Validation")
-    for epoch in pbar:
-        epoch_config = TrainingConfig(
-            batch_size=train_config.batch_size,
-            epochs=1,
-            learning_rate=train_config.learning_rate,
-            weight_decay=train_config.weight_decay,
-            seed=train_config.seed,
-            shuffle=train_config.shuffle,
-            drop_last=train_config.drop_last,
-        )
-        epoch_history = train_usad(model, train_windows, epoch_config, device=device, show_progress=False)
-        history.ae1_losses.append(epoch_history.ae1_losses[-1])
-        history.ae2_losses.append(epoch_history.ae2_losses[-1])
-
-        val_loss = _evaluate_reconstruction_loss(model, val_windows, train_config.batch_size, device)
-        history.val_recon_losses.append(val_loss)
-
-        pbar.set_postfix({"AE1": f"{history.ae1_losses[-1]:.4f}", "Val": f"{val_loss:.4f}"})
-
-        if best_val - val_loss >= early_stopping.min_delta:
-            best_val = val_loss
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if patience_counter >= early_stopping.patience:
-            pbar.set_description("Early stopping triggered")
-            break
-
-    return history
+    return train_usad(
+        model,
+        train_windows,
+        train_config,
+        device=device,
+        show_progress=True,
+        val_windows=val_windows,
+        early_stopping=early_stopping,
+    )
 
 
 def _evaluate_reconstruction_loss(

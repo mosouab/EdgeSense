@@ -102,10 +102,16 @@ def load_metropt_dataset(
 
 
 def load_failure_reports() -> pd.DataFrame:
-    """Load failure intervals described in the Metro.PT data documentation.
+    """Load failure intervals: 4 from Metro.PT docs + 2 audit-confirmed events.
+
+    The audit-added entries come from manual inspection of the top unlabeled
+    high-score plateaus on the test horizon. Each one was classified as
+    "behaves like a labeled air-leak event" based on sensor trace analysis
+    (see scripts/audit_unlabeled_peaks.py).
 
     Returns:
-        DataFrame with failure intervals and metadata for evaluation.
+        DataFrame with failure intervals, metadata, and a `source` column
+        ("metropt_report" or "audit") distinguishing the two label provenances.
     """
 
     reports = [
@@ -115,6 +121,7 @@ def load_failure_reports() -> pd.DataFrame:
             "end_time": "2020-04-18 23:59",
             "failure_type": "AirLeak",
             "severity": "High stress",
+            "source": "metropt_report",
             "report": "Air leak",
         },
         {
@@ -123,7 +130,8 @@ def load_failure_reports() -> pd.DataFrame:
             "end_time": "2020-05-30 06:00",
             "failure_type": "AirLeak",
             "severity": "High stress",
-            "report": "Maintenance on 30 Apr at 12:00",
+            "source": "metropt_report",
+            "report": "Maintenance on 30 May at 12:00",
         },
         {
             "failure_id": 3,
@@ -131,6 +139,7 @@ def load_failure_reports() -> pd.DataFrame:
             "end_time": "2020-06-07 14:30",
             "failure_type": "AirLeak",
             "severity": "High stress",
+            "source": "metropt_report",
             "report": "Maintenance on 8 Jun at 16:00",
         },
         {
@@ -139,7 +148,26 @@ def load_failure_reports() -> pd.DataFrame:
             "end_time": "2020-07-15 19:00",
             "failure_type": "AirLeak",
             "severity": "High stress",
+            "source": "metropt_report",
             "report": "Maintenance on 16 Jul at 00:00",
+        },
+        {
+            "failure_id": 5,
+            "start_time": "2020-04-20 00:00",
+            "end_time": "2020-04-21 06:00",
+            "failure_type": "AirLeak",
+            "severity": "Medium stress",
+            "source": "audit",
+            "report": "Audit-identified post-#1 residual: TP2/Motor cycling elevated for ~21h immediately after the labeled Apr 18 repair window.",
+        },
+        {
+            "failure_id": 6,
+            "start_time": "2020-06-22 12:00",
+            "end_time": "2020-06-25 09:00",
+            "failure_type": "AirLeak",
+            "severity": "High stress",
+            "source": "audit",
+            "report": "Audit-identified: 62h sustained compressor activity (TP2 ~7 bar, Motor ~5A continuous) matching the signature of labeled air-leak days. Not in original Metro.PT failure log.",
         },
     ]
 

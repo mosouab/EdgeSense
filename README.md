@@ -1,117 +1,135 @@
-# EdgeSense: Edge-Native Multi-Modal Anomaly Detection
+# EdgeSense
 
-## Executive Summary
-EdgeSense is an edge-native machine-learning pipeline for unsupervised predictive maintenance on industrial assets. Traditional monitoring solutions stream raw sensor data to the cloud, paying for bandwidth, latency, and data-sovereignty risk. EdgeSense localizes training and inference at the machine level: the system learns the asset's own healthy operating envelope and flags deviations as they emerge, without requiring a labeled failure dataset.
+Unsupervised anomaly detection for predictive maintenance on industrial assets. This is a proof of concept built as part of an entrepreneurship project at uni. The idea is to train an autoencoder on a machine's healthy sensor data and flag windows that the model can't reconstruct well, with the long-term goal of running both training and inference at the edge instead of streaming raw data to the cloud.
 
-This repository is a research-grade proof of concept validated on the Metro.PT Air Compressor dataset (Metro do Porto, Feb–Sep 2020).
+The model and training setup are based on USAD (Audibert et al., KDD 2020), adapted to use a 1D-CNN backbone for parallelism and a smaller parameter count. Everything is validated on the Metro.PT air-compressor dataset (Veloso et al., 2022).
 
-## Strategic Goal
-Deliver a calibration-and-deploy pipeline that can be installed on a new industrial asset in under a day and run on resource-constrained hardware (industrial IPCs, Jetson Nano class). The pipeline is positioned as a **high-recall screening tool feeding a human triage workflow** — the goal is to never miss a failure event, while keeping the alert rate low enough that operators trust it.
+## Data
 
-## System Architecture
-The core engine is a 1D-Convolutional Neural Network (1D-CNN) realization of the USAD (Unsupervised Anomaly Detection via Adversarial Training) framework. The 1D-CNN backbone is chosen over recurrent alternatives for parallelism and a small parameter footprint, both critical for edge deployment.
+Metro.PT is a public dataset from a compressed-air production unit on the Porto metro. It covers 2020-02-01 to 2020-09-01 at roughly 10 s sampling and has 15 sensor channels (pressures, oil temperature, motor current, several discrete signals). The maintenance log documents four air-leak failures during this period:
 
-### Adversarial Calibration
-A shared encoder feeds two decoders. Training proceeds in two coupled phases:
-1. **Reconstruction phase:** The encoder + decoder1 + decoder2 are jointly trained to reproduce healthy sensor windows.
-2. **Adversarial phase:** A minimax game is gradually phased in — decoder1 learns to fool decoder2 with its reconstructions, while decoder2 learns to flag deviations. At inference, the disagreement between the two decoders amplifies anomaly scores for inputs that fall outside the learned baseline.
+| ID | Interval | Duration | Source |
+|----|----------|----------|--------|
+| 1 | 2020-04-18 00:00 to 23:59 | 24 h | Metro.PT log |
+| 2 | 2020-05-29 23:30 to 2020-05-30 06:00 | 6.5 h | Metro.PT log |
+| 3 | 2020-06-05 10:00 to 2020-06-07 14:30 | 52.5 h | Metro.PT log |
+| 4 | 2020-07-15 14:30 to 19:00 | 4.5 h | Metro.PT log |
 
-To stabilize training on small calibration datasets, the adversarial weight `w_adv` is linearly ramped from 0 to a configurable cap (default 0.3) over the first 30 epochs, gradient norms are clipped at 1.0, and the best-validation checkpoint is restored at the end of training.
+While inspecting the model's top false positives I also noticed two periods that looked like the labeled failures but weren't in the log: Apr 20-21 (right after #1) and Jun 22-25 (62 h with TP2 at ~7 bar and motor current ~5 A continuously, which is exactly what the labeled air-leak days look like). I added these to the failure report with `source="audit"` so they're distinguishable from the original four. The figure below shows the sensor traces I used to make this call; `scripts/audit_unlabeled_peaks.py` regenerates it.
 
-![Architecture Diagram](figures/architecture.png)
+![Plateau audit](figures/08_unlabeled_plateau_audit.png)
 
-## Understanding the Data
-The Metro.PT dataset captures 15 sensor channels at ~10-second resolution from a single air compressor on the Porto metro between Feb–Sep 2020. Side-by-side traces below illustrate why an unsupervised approach fits: a healthy day exhibits regular short compression cycles, while a failure day shows the compressor running near-continuously to compensate for the air leak.
+## Method
 
-![Sensor traces — healthy vs failure](figures/01_sensor_overview.png)
+### Model
+A USAD-style network with a shared 1D-CNN encoder and two decoders (`src/edgesense/models/usad_cnn.py`). The encoder downsamples the input window by a factor of 4 using two stride-2 convolutions. Both decoders mirror the encoder with nearest-neighbour upsampling and convolutional layers. Configuration: 32 base channels, 64 latent channels, kernel size 3. Window size is 100 samples (about 17 minutes) with stride 50.
 
-## Validation Methodology
-**Why this matters:** Many unsupervised anomaly detection benchmarks inflate metrics through (a) point-adjustment scoring, (b) threshold selection on the test labels, and (c) train/eval temporal overlap. EdgeSense reports its primary metrics under conditions designed to mirror a real deployment.
+![Architecture](figures/architecture.png)
 
-* **Three-way temporal split.** The model is trained on Metro.PT data from **2020-02-01 → 2020-04-01** (445,298 rows, all pre-failure). The first **14 days of the eval period (2020-04-01 → 2020-04-15)** are reserved as an on-site **recalibration window** — they sit before the first labeled failure (2020-04-18), so they are healthy by report and used only to refit the threshold. Final evaluation runs on **2020-04-15 → 2020-09-01**.
-* **Deployable threshold via on-site recalibration.** After deployment, the system observes 14 days of operation and sets its alert threshold at the **99th percentile** of the smoothed anomaly scores collected during that window. No failure labels are consulted. This mirrors a real customer install: drop the unit on the asset, let it learn the site's normal, then arm.
-* **Audit-expanded label set.** Manual inspection of the highest-scoring unlabeled periods on the test horizon (see `scripts/audit_unlabeled_peaks.py` and `figures/08_unlabeled_plateau_audit.png`) identified **two additional air-leak-signature events** missing from the Metro.PT failure log: a 21-hour residual on **Apr 20–21, 2020** (immediately following labeled failure #1) and a **62-hour sustained event on Jun 22–25, 2020** (TP2 elevated to ~7 bar, motor current ~5A continuous — the exact signature of labeled air-leak days). Both are marked `source: "audit"` in the failure report and used alongside the original 4 Metro.PT-reported events for evaluation.
-* **Reference thresholds.** We additionally report (a) the *training-period* threshold (no recalibration) and (b) the *oracle* PR-optimal threshold computed *with* test labels. The first quantifies how much recalibration buys us; the second bounds what's obtainable.
-* **Point-adjusted (PA) metrics** are reported only in a supplementary block. PA marks an entire failure interval as detected if any window in it fires; recent literature ([Kim et al., AAAI 2022](https://arxiv.org/abs/2109.05257)) shows that even random scores can achieve high PA-F1, so we do not lead with these numbers.
+### Training
+Adam with lr = 1e-3, batch size 256, MSE reconstruction loss. The USAD loss schedules the relative weight of reconstruction and adversarial terms over training; the original paper uses `w_adv = 1 - 1/epoch`, which ramps too fast on a small dataset and destabilises training. I switched to a linear ramp from 0 to a configurable cap (default 0.3) over 30 epochs and added gradient clipping at norm 1.0. The training script tracks validation reconstruction loss and restores the best checkpoint before scoring.
 
-## Technical Performance
-All numbers below are on the held-out **test horizon (2020-04-15 → 2020-09-01)**, with the threshold set on the preceding 14-day recalibration window.
+Early in development the adversarial component was silently disabled (the outer training loop kept calling the inner one with `epochs=1`, which made `w_adv = 1 - 1/1 = 0` forever). The current code merges the two functions so optimizer state and the shuffle order persist across epochs, and `w_adv` actually moves.
 
-### Headline (deployable, on-site recalibrated threshold)
-| Metric | Raw | + Temporal persistence (≥25 consecutive flags) |
+### Evaluation methodology
+Three pieces of methodology that matter:
+
+1. *Temporal split*. Training uses Feb-Mar 2020 (445 k rows, before any logged failure). Evaluation uses Apr-Sep 2020 (1.07 M rows, contains all six failures). No timestamps cross between train and eval.
+
+2. *On-site recalibration*. The first 14 days of the eval period (2020-04-01 to 2020-04-15) are reserved as a recalibration window. Threshold is set to the 99th percentile of anomaly scores observed in that window. This simulates a real install: drop the unit on the asset, let it run for two weeks, then arm. No failure labels are consulted to set the threshold. The actual test horizon is 2020-04-15 to 2020-09-01.
+
+3. *Honest metrics*. I report raw window-level precision and recall as the primary numbers. Point-adjusted F1 is reported separately because Kim et al. (AAAI 2022) showed that even random predictions can score high on PA-F1.
+
+I picked p99 for recalibration after a brief check: p99.9 chased a single outlier window in the recal period and gave a degenerately strict threshold. p99 sits at the natural knee in the recal-window score distribution.
+
+## Results
+
+All numbers on the test horizon (2020-04-15 to 2020-09-01) with the threshold set on the preceding 14-day recalibration window.
+
+### Primary results (recalibrated threshold)
+
+| | Raw | + Persistence filter (>= 25 windows) |
 |---|---|---|
-| Recall | **88.3%** | 87.5% |
-| Precision | **57.2%** | 57.6% |
-| F1 | **0.69** | 0.69 |
-| ROC-AUC | **0.905** | — |
+| Recall | 0.883 | 0.875 |
+| Precision | 0.572 | 0.576 |
+| F1 | 0.69 | 0.69 |
 
-### Reference: oracle PR-optimal threshold (uses test labels)
-| Metric | Raw |
-|---|---|
-| Recall | 95.5% |
-| Precision | 51.9% |
-| F1 | 0.67 |
+ROC-AUC on the test horizon: 0.905.
 
-The recalibrated threshold actually achieves a higher F1 than the oracle PR-optimal threshold — by sitting slightly to the right on the PR curve (higher precision at the cost of some recall), it lands on a sweeter F1 point than the label-aware search.
+![Anomaly score timeline](figures/03_anomaly_score_timeline.png)
 
-### Reference: training-period threshold (no recalibration)
-| Metric | Raw |
-|---|---|
-| Recall | 90.6% |
-| Precision | 23.6% |
-| F1 | 0.37 |
+### Reference points
 
-**On-site recalibration nearly doubles F1 (0.37 → 0.69) and lifts precision 2.4×** (23.6% → 57.2%) while improving recall slightly (90.6% → 88.3%).
+For context, the same model with two other thresholding strategies:
 
-### Supplementary: point-adjusted scores
-At the recalibrated threshold, point-adjusted recall is 100% and PA precision is 60.2%. We surface these only for parity with the USAD literature; the raw numbers above are the load-bearing claim.
+| Threshold strategy | Recall | Precision | F1 |
+|---|---|---|---|
+| Recalibrated (p99 of recal scores) | 0.883 | 0.572 | 0.69 |
+| Training-period p99.9 (no recalibration) | 0.906 | 0.236 | 0.37 |
+| Oracle PR-optimal (uses test labels) | 0.955 | 0.519 | 0.67 |
 
-### A note on the remaining false positives
-After the audit, the most prominent remaining unlabeled high-score region is **May 26–28** (~42h plateau). Sensor inspection shows TP2 mean ~0.24 bar and motor current mean ~0.50A — i.e., the compressor is largely **idle**, not faulty. The model correctly identifies this as "not what I learned during training" but it isn't an air-leak event. A simple `compressor-running` gate (skip scoring when motor current is sustained near zero) would suppress these without affecting failure detection. This is on the roadmap and would push precision further.
+The training-period threshold over-fires on the test horizon because the score distribution drifts between Feb-Mar and Apr-Sep. On-site recalibration roughly doubles F1 over no recalibration and lifts precision 2.4x.
 
-## Visual Walkthrough
+The recalibrated threshold also slightly beats the oracle on F1, because the oracle picks the F1-max point on the PR curve while my deployable threshold lands a bit further right on a sweeter spot. I wouldn't read too much into the difference; it's noise on a small label set.
 
-### 1. Training dynamics
-All three losses descend cleanly through both the reconstruction and adversarial phases; the best checkpoint (val ≈ 0.10 @ epoch 20) is restored before scoring. The green curve shows the linear `w_adv` ramp that mixes in the adversarial objective gradually, so the encoder converges before the minimax game intensifies.
+### Detection latency
 
-![Training Curves](figures/02_training_curves.png)
+For failure #3 (Jun 5-7, the longest labeled failure) the smoothed score crosses the threshold 6 min 15 s after the labeled start and stays above for the rest of the interval (see `figures/07_june_failure_zoom.png`). I haven't measured latency on all failures yet.
 
-### 2. Detection on the test horizon (headline)
-Smoothed anomaly score across the 4.5-month test horizon. The green-shaded recalibration window on the left is what the system uses to refit the threshold before evaluation begins. The orange dashed line is the recalibrated threshold (≈1.15); the gray dotted line is the training-period threshold without recalibration (≈0.29) — visibly too low against the test-horizon noise floor. All four labeled failures (red bands) sit above the recalibrated threshold; several unlabeled multi-day plateaus also exceed it.
+## Figures
 
-![Anomaly Score Timeline](figures/03_anomaly_score_timeline.png)
+Generated by `scripts/generate_figures.py` after `scripts/run_full_evaluation.py`. They're numbered in the order they show up in the writeup:
 
-### 3. Score separation across the expanded label set
-After the audit, failure windows form two clusters: the original 1.5–2.5 group (Metro.PT-reported air leaks) and a 6–9 group (the audit-identified June 22-25 event plus tail of others). The recalibrated threshold at 1.15 cleanly separates both failure clusters from the dominant healthy mode at score 0.
+- `01_sensor_overview.png`: raw sensor traces on a healthy day vs a failure day, side by side.
+- `02_training_curves.png`: AE1, AE2 and validation losses across epochs, with the `w_adv` ramp overlaid.
+- `03_anomaly_score_timeline.png`: smoothed score on the test horizon, with the recalibration window, both thresholds, and the labeled failures.
+- `04_score_distribution.png`: log-scale histogram of healthy vs failure scores.
+- `05_precision_recall_curve.png`: PR curve with the recalibrated and oracle operating points marked.
+- `06_latent_pca.png`: PCA of the encoder output on eval windows.
+- `07_june_failure_zoom.png`: zoom on the June air leak with detection latency annotated.
+- `08_unlabeled_plateau_audit.png`: sensor traces during the top three unlabeled high-score periods, vs a reference healthy day. This is the figure I used to decide which periods to add to the failure report.
 
-![Score Distribution](figures/04_score_distribution.png)
+## Discussion
 
-### 4. Precision-recall tradeoff
-ROC-AUC = 0.905. The recalibrated operating point sits at a slightly higher-precision spot on the curve than the oracle PR-optimal point — meaning the label-free 14-day calibration actually achieves better F1 than an explicit supervised threshold search.
+### What's working
+The model genuinely separates healthy and failure windows. AUC is around 0.9, the latent space clusters failures distinctly (figure 06), and the headline F1 of 0.69 with a label-free threshold is in a reasonable range for unsupervised anomaly detection on time series. The audit finding (two unlabeled failures showing up as the highest false-positive plateaus) is, in some ways, the most interesting result: the model surfaced events the original data curators missed.
 
-![PR Curve](figures/05_precision_recall_curve.png)
+### What's not great
+- Recall isn't perfect. Adding the audit-confirmed failures (which are tougher to detect than the Metro.PT ones because their scores are more variable) brought recall down from 95% to 88%. The Apr 20-21 plateau in particular has score peaks below the threshold for parts of the interval.
+- Precision of 57% is a window-level number. A lot of the remaining false positives come from one specific period in May where the compressor is mostly idle, which is a different problem than detection; see Limitations below.
+- All failures in the dataset are air leaks. I don't have evidence that this generalises to bearing or motor faults without re-calibration.
 
-### 5. Latent space structure
-PCA of the encoder's latent representation on the eval period. Failure windows form a distinct tight cluster (top), confirming the model has internalized a consistent fault signature rather than relying on spurious noise.
+### Compared to other work
+USAD's original paper reports F1 around 0.78-0.95 on several datasets including SMAP, MSL, SMD. Those numbers use point-adjusted scoring, so direct comparison is misleading. My raw-window F1 of 0.69 should be compared to other raw-window numbers in the literature, which are scarce because most papers use PA-F1.
 
-![Latent PCA](figures/06_latent_pca.png)
+## Limitations and next steps
 
-### 6. Audit of unlabeled high-score plateaus
-A manual inspection of the top 3 unlabeled high-score periods on the test horizon — comparing each against a reference healthy day (Feb 20) — drove the label-set expansion described in *Validation Methodology*. The Jun 22-25 column shows TP2 sustained at ~7 bar and motor current ~5A: an unambiguous air-leak signature that wasn't in the Metro.PT log. The May 26-28 column shows the opposite — compressor mostly idle — which the model still flags but should be filtered by a "compressor-running" gate at deployment time.
+- *Idle-period false positives.* The biggest remaining cluster of false positives is around May 26-28, where the compressor is essentially idle (TP2 mean 0.24 bar, motor current mean 0.5 A). The model correctly identifies this as different from the normal cycling it learned during training, but it's not a fault. A simple gate ("only score windows where motor current sustains above some floor") would suppress this without affecting fault detection. I haven't implemented it.
+- *Single asset type.* All validation is on one air compressor. The next step is to test calibration on a different asset (or even another compressor) to see how much of the pipeline is asset-specific.
+- *No edge hardware run.* The README originally claimed edge deployment as a selling point, but I haven't actually measured inference latency or memory on a Jetson Nano or Pi 4. The model is small (about 170 KB of parameters), which is encouraging, but it's not the same as a measurement.
+- *Single random seed.* All numbers above are from one training run with `seed=42`. I should run a small seed sweep before reporting numbers in a more formal setting.
 
-![Plateau Audit](figures/08_unlabeled_plateau_audit.png)
+## How to run
 
-### 7. Detection latency — June Air Leak (failure #3)
-Zoom on the largest labeled failure. The smoothed anomaly score crosses the deployable threshold **6 minutes 15 seconds after the labeled failure start** and remains above threshold for the duration of the event. Sub-10-minute detection latency on a 52-hour fault is the kind of headroom that turns reactive maintenance into preventive maintenance.
+The project uses uv.
 
-![June Zoom](figures/07_june_failure_zoom.png)
+```
+uv sync
+uv run python scripts/run_full_evaluation.py
+```
 
-## Known Limitations
-* **One failure mode.** All four labeled Metro.PT events are air leaks. We make no claim that the model generalizes to bearing faults, motor faults, or thermal failures without re-calibration.
-* **Eval-period drift.** Precision is limited by natural drift between the 2-month training period and the 5-month evaluation period. An on-site re-calibration step (refitting the threshold on the first weeks of edge data) would close most of the gap; that workflow is not yet in this POC.
-* **No edge benchmarks yet.** Inference latency and memory on Jetson Nano / Raspberry Pi 4 hardware are part of the next sprint, not measured here.
+This trains the model, evaluates on the held-out split, writes artifacts to `reports/full_evaluation/`, and calls `generate_figures.py` to produce all figures in `figures/`. Takes about 2-3 minutes on a CPU.
 
-## Literature & State-of-the-Art
-* **USAD: Unsupervised Anomaly Detection via Adversarial Training** — Audibert et al., KDD 2020. Source of the encoder + dual-decoder architecture and adversarial training schedule.
-* **Deep Learning for Time Series Classification** — Fawaz et al., 2019. Motivation for the 1D-CNN backbone over recurrent alternatives.
-* **Towards a Rigorous Evaluation of Time-series Anomaly Detection** — Kim et al., AAAI 2022. Source of the point-adjustment critique that informs our reporting methodology.
+Other useful scripts:
+
+```
+uv run python scripts/generate_figures.py     # re-render figures from existing artifacts
+uv run python scripts/audit_unlabeled_peaks.py # rebuild the audit figure
+```
+
+## References
+
+- Audibert, J., Michiardi, P., Guyard, F., Marti, S., and Zuluaga, M.A. (2020). USAD: UnSupervised Anomaly Detection on Multivariate Time Series. *KDD 2020*.
+- Veloso, B., Ribeiro, R.P., Gama, J., and Pereira, P. (2022). The MetroPT dataset for predictive maintenance. *Scientific Data*, 9, 764.
+- Kim, S., Choi, K., Choi, H.S., Lee, B., and Yoon, S. (2022). Towards a rigorous evaluation of time-series anomaly detection. *AAAI 2022*.
+- Fawaz, H.I., Forestier, G., Weber, J., Idoumghar, L., and Muller, P.A. (2019). Deep learning for time series classification: a review. *Data Mining and Knowledge Discovery*, 33, 917-963.

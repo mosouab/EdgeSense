@@ -66,6 +66,7 @@ def compute_usad_scores(
     model: USADConv1d,
     windows: np.ndarray,
     config: ScoringConfig,
+    show_progress: bool = True,
 ) -> np.ndarray:
     """Compute USAD anomaly scores for each window.
 
@@ -73,6 +74,7 @@ def compute_usad_scores(
         model: Trained USADConv1d model.
         windows: Windowed dataset of shape (num_windows, window_size, num_features).
         config: Scoring configuration.
+        show_progress: Whether to show a tqdm progress bar.
 
     Returns:
         Array of anomaly scores per window.
@@ -91,7 +93,9 @@ def compute_usad_scores(
 
     scores: list[float] = []
     with torch.no_grad():
-        for (batch_windows,) in tqdm(dataloader, desc="Scoring windows", leave=False):
+        for (batch_windows,) in tqdm(
+            dataloader, desc="Scoring windows", leave=False, disable=not show_progress
+        ):
             batch_windows = batch_windows.to(config.device)
             recon1, _, _ = model(batch_windows)
             recon2_from_recon1 = model.reconstruct_via_decoder2(recon1)

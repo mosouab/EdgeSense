@@ -81,12 +81,13 @@ class SimulationState:
         return True
 
     async def _run(self, source: DataSource) -> None:
-        speed_ref = self
-        async def speed_provider() -> float:
-            return speed_ref.speed
+        # Pass a getter so /speed updates take effect mid-stream instead of
+        # only at next start.
+        def get_speed() -> float:
+            return self.speed
 
         async def adaptive_stream():
-            async for ev in source.stream(self.speed, self.stop_event, self.pause_event):
+            async for ev in source.stream(get_speed, self.stop_event, self.pause_event):
                 yield ev
 
         try:

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 import numpy as np
 import pandas as pd
@@ -60,13 +60,14 @@ class DataSource(ABC):
     @abstractmethod
     async def stream(
         self,
-        speed_multiplier: float,
+        get_speed: Callable[[], float],
         stop: asyncio.Event,
         pause: asyncio.Event,
     ) -> AsyncIterator[SensorEvent]:
         """Async iterator yielding events at simulated real-time.
 
-        `speed_multiplier` scales the inter-event sleep. `stop` aborts.
+        `get_speed()` is called each iteration so the multiplier can be
+        adjusted live without restarting the stream. `stop` aborts.
         `pause` (when set) blocks until cleared.
         """
 
@@ -98,7 +99,7 @@ class MetroPTSource(DataSource):
 
     async def stream(
         self,
-        speed_multiplier: float,
+        get_speed: Callable[[], float],
         stop: asyncio.Event,
         pause: asyncio.Event,
     ) -> AsyncIterator[SensorEvent]:
@@ -110,7 +111,6 @@ class MetroPTSource(DataSource):
         if not np.isfinite(sampling) or sampling <= 0:
             sampling = 10.0
         n_rows = len(df) if self._max_rows is None else min(self._max_rows, len(df))
-        sim_start = asyncio.get_event_loop().time()
 
         for idx in range(n_rows):
             if stop.is_set():
@@ -132,8 +132,9 @@ class MetroPTSource(DataSource):
                 cycle_features=None,
                 metadata={"row_index": int(idx)},
             )
-            # Sleep to honour the speed multiplier; one source-tick is `sampling` s of asset time.
-            await asyncio.sleep(max(sampling / max(speed_multiplier, 1e-6), 0.0))
+            # Read speed fresh each tick so /speed updates take effect live.
+            speed = max(get_speed(), 1e-6)
+            await asyncio.sleep(max(sampling / speed, 0.0))
 
 
 def get_source(name: str) -> DataSource:

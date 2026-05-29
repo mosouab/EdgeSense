@@ -87,6 +87,17 @@ class EdgeDevice:
         await self._broadcast_phase("calibrating", 0.0, f"collecting {calibration_target:,} samples")
 
         async for event in source_stream:
+            if event.metadata.get("jumped"):
+                # Source teleported. Drop any history that pre-dates the jump
+                # so the next scored window contains only post-jump data.
+                self._buffer.clear()
+                self._rolling_scores = []
+                self._window_count = 0
+                await self._broadcast_phase(
+                    self._phase.name,
+                    self._phase.progress,
+                    f"jumped to row {event.index} ({event.timestamp})",
+                )
             self._buffer.append(event.features)
             phase_name = self._phase.name
 

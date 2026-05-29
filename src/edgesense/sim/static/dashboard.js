@@ -26,7 +26,11 @@ const els = {
   scoreMeta: document.getElementById("score-meta"),
   thresholdMeta: document.getElementById("threshold-meta"),
   timeMeta: document.getElementById("time-meta"),
+  failuresList: document.getElementById("failures-list"),
+  failuresHint: document.getElementById("failures-hint"),
 };
+
+let currentPhase = "idle";
 
 const palette = {
   text: "#e6edf6",
@@ -190,10 +194,61 @@ function updatePhase(name, progress, detail) {
     els.phaseName.textContent = name;
     els.phasePill.dataset.phase = name;
     els.phaseMeta.textContent = name;
+    if (name !== currentPhase) {
+      currentPhase = name;
+      refreshFailureButtons();
+    }
   }
   if (detail !== undefined && detail !== null) els.phaseDetail.textContent = detail;
   if (typeof progress === "number") {
     els.progressBar.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
+  }
+}
+
+function refreshFailureButtons() {
+  const enabled = currentPhase === "inferring";
+  els.failuresHint.textContent = enabled
+    ? "click a row to jump 10 minutes before the labeled failure starts"
+    : `jumps available once the model is inferring (now: ${currentPhase})`;
+  els.failuresList.querySelectorAll(".btn-jump").forEach((b) => (b.disabled = !enabled));
+}
+
+async function loadFailures() {
+  try {
+    const r = await fetch("/failures");
+    const data = await r.json();
+    els.failuresList.innerHTML = "";
+    (data.failures || []).forEach((f) => {
+      const li = document.createElement("li");
+      const left = document.createElement("span");
+      left.className = "label";
+      const tag = document.createElement("span");
+      tag.className = "source-tag" + (f.source === "audit" ? " audit" : "");
+      tag.textContent = f.source === "audit" ? "audit" : "logged";
+      left.textContent = f.label + " ";
+      left.appendChild(tag);
+      const btn = document.createElement("button");
+      btn.className = "btn-jump";
+      btn.textContent = "▶ jump";
+      btn.dataset.failureId = String(f.id);
+      btn.addEventListener("click", () => jumpToFailure(f.id, f.label));
+      li.appendChild(left);
+      li.appendChild(btn);
+      els.failuresList.appendChild(li);
+    });
+    refreshFailureButtons();
+  } catch (err) {
+    console.error("Failed to load failures", err);
+  }
+}
+
+async function jumpToFailure(failureId, label) {
+  const res = await api("/jump", { failure_id: failureId });
+  if (res.status === "ok") {
+    console.log("Jumped to failure", failureId, label, res.index);
+  } else if (res.status === "rejected") {
+    setStatus("disconnected", res.detail || "jump rejected");
+    setTimeout(() => setStatus("connected", "connected"), 1500);
   }
 }
 
@@ -319,5 +374,6 @@ els.speedSelect.addEventListener("change", () =>
 window.addEventListener("DOMContentLoaded", () => {
   initCharts();
   loadSources();
+  loadFailures();
   openSocket();
 });

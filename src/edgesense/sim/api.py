@@ -33,6 +33,11 @@ class SpeedRequest(BaseModel):
     speed: float
 
 
+class JumpRequest(BaseModel):
+    failure_id: int | None = None
+    index: int | None = None
+
+
 class SimulationState:
     """Owns the running sim task plus its control flags. Singleton-per-process."""
 
@@ -44,6 +49,8 @@ class SimulationState:
         self.speed: float = 60.0
         self.current_source: str | None = None
         self.device: EdgeDevice | None = None
+        self.source: DataSource | None = None
+        self._seek_to: int | None = None
 
     async def start(self, source_name: str, speed: float, calibration_samples: int) -> None:
         await self.stop()
@@ -55,6 +62,8 @@ class SimulationState:
         source = get_source(source_name)
         device_cfg = DeviceConfig(calibration_samples=calibration_samples)
         self.device = EdgeDevice(self.bus, source, device_cfg)
+        self.source = source
+        self._seek_to = None
         self.task = asyncio.create_task(self._run(source))
 
     async def stop(self) -> None:
@@ -68,6 +77,8 @@ class SimulationState:
                 pass
         self.task = None
         self.device = None
+        self.source = None
+        self._seek_to = None
         self.current_source = None
 
     def set_speed(self, speed: float) -> None:
@@ -81,13 +92,19 @@ class SimulationState:
         return True
 
     async def _run(self, source: DataSource) -> None:
-        # Pass a getter so /speed updates take effect mid-stream instead of
-        # only at next start.
+        # Pass getters so /speed and /jump take effect mid-stream.
         def get_speed() -> float:
             return self.speed
 
+        def consume_seek() -> int | None:
+            seek = self._seek_to
+            self._seek_to = None
+            return seek
+
         async def adaptive_stream():
-            async for ev in source.stream(get_speed, self.stop_event, self.pause_event):
+            async for ev in source.stream(
+                get_speed, consume_seek, self.stop_event, self.pause_event
+            ):
                 yield ev
 
         try:
@@ -96,6 +113,9 @@ class SimulationState:
             pass
         except Exception:
             LOG.exception("Simulation crashed.")
+
+    def request_jump(self, index: int) -> None:
+        self._seek_to = max(0, int(index))
 
 
 state = SimulationState()
@@ -121,6 +141,50 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/sources")
 async def get_sources() -> dict[str, Any]:
     return {"sources": list_available_sources()}
+
+
+@app.get("/failures")
+async def get_failures() -> dict[str, Any]:
+    source = state.source
+    if source is None:
+        # Build markers from a transient instance so the UI can populate the
+        # list even before /start. This lets the operator pick a target before
+        # starting the sim.
+        from .source import get_source as _get_source
+        try:
+            source = _get_source("metropt")
+        except Exception:
+            return {"failures": []}
+    try:
+        markers = source.failure_markers()
+    except Exception:
+        LOG.exception("Failed to compute failure markers")
+        return {"failures": []}
+    return {"failures": [marker.__dict__ for marker in markers]}
+
+
+@app.post("/jump")
+async def jump(req: JumpRequest) -> dict[str, Any]:
+    if state.source is None or state.device is None:
+        return {"status": "error", "detail": "simulation not running"}
+    if state.device.phase.name != "inferring":
+        return {
+            "status": "rejected",
+            "detail": f"jumps only allowed while inferring (phase = {state.device.phase.name})",
+        }
+
+    index: int | None = req.index
+    if index is None and req.failure_id is not None:
+        markers = state.source.failure_markers()
+        for m in markers:
+            if m.id == req.failure_id:
+                index = m.jump_index
+                break
+    if index is None:
+        return {"status": "error", "detail": "failure_id or index required"}
+
+    state.request_jump(index)
+    return {"status": "ok", "index": index}
 
 
 @app.post("/start")

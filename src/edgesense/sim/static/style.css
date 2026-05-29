@@ -186,3 +186,40 @@ body {
 
 .legend-box { display: inline-block; width: 10px; height: 10px; background: var(--accent); border-radius: 2px; margin-right: 4px; }
 .legend-box.threshold { background: var(--threshold); }
+
+.failures-block { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.failures-block h3 { margin: 0 0 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.failures-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.failures-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.failures-list .label { color: var(--text); }
+.failures-list .source-tag { color: var(--muted); font-size: 10px; margin-left: 6px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); }
+.failures-list .source-tag.audit { color: var(--warn); border-color: var(--warn); }
+.failures-list .btn-jump {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.failures-list .btn-jump:hover { background: var(--accent); color: var(--bg); }
+.failures-list .btn-jump:disabled { color: var(--muted); border-color: var(--line); cursor: not-allowed; background: transparent; }

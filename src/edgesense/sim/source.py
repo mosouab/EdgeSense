@@ -18,7 +18,7 @@ from typing import Any, AsyncIterator, Callable
 import numpy as np
 import pandas as pd
 
-from ..datasets.metropt import load_metropt_dataset
+from ..datasets.metropt import load_metropt_dataset, load_metropt_failures
 
 
 @dataclass
@@ -30,6 +30,10 @@ class SensorEvent:
     (Hydraulic, CMAPSS) `cycle_features` carries a (T, F) matrix and
     `features` holds the last timestep so the UI can still show one
     scalar per channel.
+
+    `metadata["jumped"] = True` is set on the first event after a seek so
+    downstream consumers can reset any rolling state that depended on
+    contiguous history.
     """
 
     timestamp: datetime
@@ -38,6 +42,21 @@ class SensorEvent:
     features: dict[str, float]
     cycle_features: np.ndarray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FailureMarker:
+    """A point of interest in the source that the UI can jump to."""
+
+    id: int
+    label: str
+    failure_type: str
+    severity: str
+    source: str
+    start_time: str
+    end_time: str
+    start_index: int
+    jump_index: int
 
 
 @dataclass
@@ -61,15 +80,24 @@ class DataSource(ABC):
     async def stream(
         self,
         get_speed: Callable[[], float],
+        consume_seek: Callable[[], int | None],
         stop: asyncio.Event,
         pause: asyncio.Event,
     ) -> AsyncIterator[SensorEvent]:
         """Async iterator yielding events at simulated real-time.
 
         `get_speed()` is called each iteration so the multiplier can be
-        adjusted live without restarting the stream. `stop` aborts.
-        `pause` (when set) blocks until cleared.
+        adjusted live without restarting the stream. `consume_seek()` is
+        called each iteration; if it returns a non-None row index the
+        source fast-forwards to that index and tags the next event with
+        `metadata["jumped"] = True`. `stop` aborts. `pause` (when set)
+        blocks until cleared.
         """
+
+    def failure_markers(self) -> list[FailureMarker]:
+        """Override per-source to expose jump targets. Default: none."""
+
+        return []
 
 
 class MetroPTSource(DataSource):
@@ -100,6 +128,7 @@ class MetroPTSource(DataSource):
     async def stream(
         self,
         get_speed: Callable[[], float],
+        consume_seek: Callable[[], int | None],
         stop: asyncio.Event,
         pause: asyncio.Event,
     ) -> AsyncIterator[SensorEvent]:
@@ -112,7 +141,9 @@ class MetroPTSource(DataSource):
             sampling = 10.0
         n_rows = len(df) if self._max_rows is None else min(self._max_rows, len(df))
 
-        for idx in range(n_rows):
+        idx = 0
+        jumped = False
+        while idx < n_rows:
             if stop.is_set():
                 return
             if pause.is_set():
@@ -120,21 +151,72 @@ class MetroPTSource(DataSource):
                     await asyncio.sleep(0.05)
                 if stop.is_set():
                     return
+
+            seek_target = consume_seek()
+            if seek_target is not None:
+                idx = max(0, min(int(seek_target), n_rows - 1))
+                jumped = True
+
             row = df.iloc[idx]
             event_ts = row[ts_col]
             features = {col: float(row[col]) for col in feature_cols}
             elapsed = idx * sampling
+            metadata: dict[str, Any] = {"row_index": int(idx)}
+            if jumped:
+                metadata["jumped"] = True
+                jumped = False
             yield SensorEvent(
                 timestamp=event_ts,
                 index=idx,
                 elapsed_simulated_seconds=elapsed,
                 features=features,
                 cycle_features=None,
-                metadata={"row_index": int(idx)},
+                metadata=metadata,
             )
             # Read speed fresh each tick so /speed updates take effect live.
             speed = max(get_speed(), 1e-6)
             await asyncio.sleep(max(sampling / speed, 0.0))
+            idx += 1
+
+    def failure_markers(self) -> list[FailureMarker]:
+        """Map each known Metro.PT failure to a row index we can seek to.
+
+        `jump_index` lands ~10 minutes of asset-time before the failure
+        starts so the operator can watch the score climb from baseline.
+        """
+
+        self._ensure_loaded()
+        df = self._dataset.data
+        ts_col = self._dataset.timestamp_col
+        sampling = float(self._dataset.sampling_interval_seconds)
+        if not np.isfinite(sampling) or sampling <= 0:
+            sampling = 10.0
+        lead_rows = int(round(600.0 / sampling))  # ~10 minutes
+
+        failures = load_metropt_failures()
+        timestamps = pd.to_datetime(df[ts_col], errors="raise").to_numpy()
+        markers: list[FailureMarker] = []
+        for _, row in failures.iterrows():
+            start_ts = pd.to_datetime(row["start_time"])
+            # First row whose timestamp >= start_ts.
+            start_index = int(np.searchsorted(timestamps, np.datetime64(start_ts)))
+            if start_index >= len(df):
+                continue
+            jump_index = max(0, start_index - lead_rows)
+            markers.append(
+                FailureMarker(
+                    id=int(row["failure_id"]),
+                    label=f"#{int(row['failure_id'])} {row['failure_type']} — {start_ts.strftime('%b %d, %Y %H:%M')}",
+                    failure_type=str(row["failure_type"]),
+                    severity=str(row["severity"]),
+                    source=str(row["source"]),
+                    start_time=str(start_ts),
+                    end_time=str(pd.to_datetime(row["end_time"])),
+                    start_index=start_index,
+                    jump_index=jump_index,
+                )
+            )
+        return markers
 
 
 def get_source(name: str) -> DataSource:

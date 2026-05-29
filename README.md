@@ -2,7 +2,7 @@
 
 A predictive-maintenance platform for industrial machines. The model learns what *healthy* looks like from unlabeled sensor data, then warns you when things start drifting and tells you (when it can) how much life the asset has left. Everything runs locally on the asset, so there's no raw-sensor stream going to the cloud and no labeled failure dataset required to deploy.
 
-This is the proof of concept we built for our entrepreneurship project. We validated it on three public datasets covering three very different failure profiles: sudden-onset detection on a Porto metro compressor, multi-component fault detection on a hydraulic test rig, and remaining-useful-life prediction on NASA turbofan engines.
+We validated it on three public datasets covering three very different failure profiles: sudden-onset detection on a Porto metro compressor, multi-component fault detection on a hydraulic test rig, and remaining-useful-life prediction on NASA turbofan engines.
 
 ## Why this exists
 Unplanned downtime is expensive, and the standard ways to predict it have three structural problems we wanted to fix in one go:
@@ -65,16 +65,6 @@ The classic predictive-maintenance benchmark. 100 turbofans run from healthy to 
 
 ![RUL trajectory across a test engine's life](figures/11_cmapss_rul_trajectory.png)
 
-## A few things we figured out the hard way
-- The original USAD adversarial training schedule (`w_adv = 1 - 1/epoch`) destabilizes hard on small calibration datasets. We swapped it for a gentle linear ramp to a 0.3 cap over 30 epochs, added gradient clipping, and restore the best validation checkpoint at the end. Smooth curves, better numbers.
-- Picking the alert threshold from the training-period score distribution looks fine on paper but fails on real data, because the asset's score distribution drifts after deployment. Letting the unit observe 2 weeks of on-site data and refitting the threshold from that healthy window roughly doubles F1.
-- When the model fires on something that isn't in the failure log, it's worth checking before calling it a false positive. On Metro.PT we found two real undocumented air-leak events that way.
-
-## Where this goes next
-- Edge hardware benchmarks: inference latency and RSS on a Jetson Nano and a Raspberry Pi 4. The model checkpoint is around 170 KB so we expect this to be straightforward, but unmeasured.
-- Fix valve detection on the Hydraulic rig by preserving the high-rate pressure dynamics instead of downsampling.
-- One shared encoder per asset that handles all of its components, so calibration happens once per machine instead of once per fault.
-- A pilot on a non-public asset where we can validate the recalibration story without having to rely on benchmark labels.
 
 ## Running it yourself
 We use `uv` for environment management.

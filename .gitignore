@@ -3,3 +3,12 @@
 agents.md
 .python-version
 __pycache__/
+
+# Local copies of public benchmark datasets. Each is downloaded by the
+# corresponding script in scripts/ on first run. The Metro.PT CSV under
+# data/ is already in git history.
+data/hydraulic/
+data/cmapss/
+
+# Local Claude / editor artefacts
+claude.md

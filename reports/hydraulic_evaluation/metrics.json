@@ -1,0 +1,97 @@
+{
+  "components": {
+    "cooler": {
+      "n_train": 440,
+      "n_val": 78,
+      "n_calib": 223,
+      "n_test": 2205,
+      "n_test_positives": 1464,
+      "threshold": 2.968363046646118,
+      "best_val_recon_loss": 0.12999730184674263,
+      "epochs_trained": 39,
+      "raw": {
+        "precision": 0.9959183673469387,
+        "recall": 1.0,
+        "f1": 0.9979550102249489,
+        "accuracy": 0.9972789115646259,
+        "auc": 0.9999990781914855
+      }
+    },
+    "valve": {
+      "n_train": 668,
+      "n_val": 119,
+      "n_calib": 338,
+      "n_test": 2205,
+      "n_test_positives": 1080,
+      "threshold": 0.45401325821876526,
+      "best_val_recon_loss": 0.09034895151853561,
+      "epochs_trained": 43,
+      "raw": {
+        "precision": 0.4666666666666667,
+        "recall": 0.006481481481481481,
+        "f1": 0.012785388127853882,
+        "accuracy": 0.509750566893424,
+        "auc": 0.5368304526748972
+      }
+    },
+    "pump": {
+      "n_train": 725,
+      "n_val": 129,
+      "n_calib": 367,
+      "n_test": 2205,
+      "n_test_positives": 984,
+      "threshold": 0.22834745049476624,
+      "best_val_recon_loss": 0.05384397134184837,
+      "epochs_trained": 39,
+      "raw": {
+        "precision": 0.8518518518518519,
+        "recall": 0.09349593495934959,
+        "f1": 0.1684981684981685,
+        "accuracy": 0.5882086167800453,
+        "auc": 0.6598524799744312
+      }
+    },
+    "accumulator": {
+      "n_train": 356,
+      "n_val": 63,
+      "n_calib": 180,
+      "n_test": 2205,
+      "n_test_positives": 1606,
+      "threshold": 0.41818878054618835,
+      "best_val_recon_loss": 0.07119914144277573,
+      "epochs_trained": 39,
+      "raw": {
+        "precision": 0.9813953488372092,
+        "recall": 0.13138231631382316,
+        "f1": 0.2317408017572762,
+        "accuracy": 0.3655328798185941,
+        "auc": 0.7945002775485085
+      }
+    }
+  },
+  "config": {
+    "healthy_quantile": 99.0,
+    "train_fraction": 0.7,
+    "window_seconds": 60,
+    "sensors": [
+      "PS1",
+      "PS2",
+      "PS3",
+      "PS4",
+      "PS5",
+      "PS6",
+      "EPS1",
+      "FS1",
+      "FS2",
+      "TS1",
+      "TS2",
+      "TS3",
+      "TS4",
+      "VS1",
+      "CE",
+      "CP",
+      "SE"
+    ],
+    "n_cycles": 2205
+  }
+}

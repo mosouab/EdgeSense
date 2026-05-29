@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>EdgeSense Operator Console</title>
   <link rel="stylesheet" href="/static/style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
 </head>
 <body>
   <header class="header">
@@ -42,23 +42,24 @@
     <div class="phase-pill" id="phase-pill"><span id="phase-name">idle</span></div>
     <div class="progress"><div id="progress-bar" class="bar"></div></div>
     <span id="phase-detail" class="phase-detail">awaiting start</span>
+    <span id="ws-status" class="ws-status" title="WebSocket connection">connecting…</span>
   </section>
 
   <main class="grid">
     <section class="card sensors">
       <h2>Live sensor traces</h2>
       <div class="sensor-grid">
-        <canvas id="sensor-0"></canvas>
-        <canvas id="sensor-1"></canvas>
-        <canvas id="sensor-2"></canvas>
-        <canvas id="sensor-3"></canvas>
+        <div class="chart-wrap"><canvas id="sensor-0"></canvas></div>
+        <div class="chart-wrap"><canvas id="sensor-1"></canvas></div>
+        <div class="chart-wrap"><canvas id="sensor-2"></canvas></div>
+        <div class="chart-wrap"><canvas id="sensor-3"></canvas></div>
       </div>
       <p class="sub" id="sensor-labels"></p>
     </section>
 
     <section class="card scores">
       <h2>Anomaly score</h2>
-      <canvas id="score-chart"></canvas>
+      <div class="chart-wrap chart-wrap-fill"><canvas id="score-chart"></canvas></div>
       <p class="sub"><span class="legend-box"></span> Score (smoothed) &nbsp;
         <span class="legend-box threshold"></span> Deployable threshold</p>
     </section>

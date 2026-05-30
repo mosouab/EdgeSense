@@ -59,7 +59,7 @@ class SimulationState:
         self.speed = speed
         self.current_source = source_name
 
-        source = get_source(source_name)
+        source = get_source(source_name, calibration_size=calibration_samples)
         device_cfg = DeviceConfig(calibration_samples=calibration_samples)
         self.device = EdgeDevice(self.bus, source, device_cfg)
         self.source = source
@@ -144,23 +144,36 @@ async def get_sources() -> dict[str, Any]:
 
 
 @app.get("/failures")
-async def get_failures() -> dict[str, Any]:
-    source = state.source
-    if source is None:
-        # Build markers from a transient instance so the UI can populate the
-        # list even before /start. This lets the operator pick a target before
-        # starting the sim.
-        from .source import get_source as _get_source
+async def get_failures(source: str | None = None) -> dict[str, Any]:
+    """Failure markers for `?source=NAME` (default: the running source, else metropt)."""
+
+    if source is not None:
         try:
-            source = _get_source("metropt")
+            transient = get_source(source)
+        except ValueError:
+            return {"failures": [], "error": f"unknown source: {source}"}
+        try:
+            markers = transient.failure_markers()
+        except Exception:
+            LOG.exception("Failed to compute failure markers for %s", source)
+            return {"failures": []}
+        return {"source": source, "failures": [m.__dict__ for m in markers]}
+
+    active = state.source
+    if active is None:
+        try:
+            active = get_source("metropt")
         except Exception:
             return {"failures": []}
     try:
-        markers = source.failure_markers()
+        markers = active.failure_markers()
     except Exception:
         LOG.exception("Failed to compute failure markers")
         return {"failures": []}
-    return {"failures": [marker.__dict__ for marker in markers]}
+    return {
+        "source": active.spec.name,
+        "failures": [m.__dict__ for m in markers],
+    }
 
 
 @app.post("/jump")

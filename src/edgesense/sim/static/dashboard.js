@@ -1,7 +1,12 @@
 // Dashboard frontend: connects to /ws, drives Chart.js, sends control commands.
 
 const MAX_POINTS = 240;
-const PRIMARY_CHANNELS = ["TP2", "Oil_temperature", "Motor_current", "Reservoirs"];
+const PRIMARY_CHANNELS_DEFAULTS = {
+  metropt: ["TP2", "Oil_temperature", "Motor_current", "Reservoirs"],
+  hydraulic: ["PS1", "TS1", "EPS1", "CE"],
+  cmapss: ["sensor_2", "sensor_3", "sensor_4", "sensor_7"],
+};
+const PRIMARY_CHANNELS = PRIMARY_CHANNELS_DEFAULTS.metropt;
 
 const els = {
   sourceSelect: document.getElementById("source-select"),
@@ -213,9 +218,10 @@ function refreshFailureButtons() {
   els.failuresList.querySelectorAll(".btn-jump").forEach((b) => (b.disabled = !enabled));
 }
 
-async function loadFailures() {
+async function loadFailures(sourceName) {
   try {
-    const r = await fetch("/failures");
+    const path = sourceName ? `/failures?source=${encodeURIComponent(sourceName)}` : "/failures";
+    const r = await fetch(path);
     const data = await r.json();
     els.failuresList.innerHTML = "";
     (data.failures || []).forEach((f) => {
@@ -338,21 +344,39 @@ async function api(path, payload) {
   return r.json().catch(() => ({}));
 }
 
+let sourceCatalog = [];
+
 async function loadSources() {
   try {
     const r = await fetch("/sources");
     const data = await r.json();
+    sourceCatalog = data.sources || [];
     els.sourceSelect.innerHTML = "";
-    data.sources.forEach((s) => {
+    sourceCatalog.forEach((s) => {
       const opt = document.createElement("option");
       opt.value = s.name;
       opt.textContent = s.display_name + (s.available === "false" ? " (coming soon)" : "");
       if (s.available === "false") opt.disabled = true;
       els.sourceSelect.appendChild(opt);
     });
+    // Apply defaults for the initial selection.
+    applySourceDefaults(els.sourceSelect.value);
   } catch (err) {
     console.error("Failed to load sources", err);
   }
+}
+
+function applySourceDefaults(sourceName) {
+  const spec = sourceCatalog.find((s) => s.name === sourceName);
+  if (spec) {
+    els.calibInput.value = spec.suggested_calibration;
+    const unit = spec.natural_unit || "samples";
+    const label = els.calibInput.parentElement.querySelector("span");
+    if (label) label.textContent = `Calibration ${unit}`;
+  }
+  primaryChannels = (PRIMARY_CHANNELS_DEFAULTS[sourceName] || PRIMARY_CHANNELS).slice();
+  initCharts();
+  loadFailures(sourceName);
 }
 
 els.btnStart.addEventListener("click", async () => {
@@ -370,10 +394,11 @@ els.btnStop.addEventListener("click", () => api("/stop"));
 els.speedSelect.addEventListener("change", () =>
   api("/speed", { speed: Number(els.speedSelect.value) })
 );
+els.sourceSelect.addEventListener("change", () => applySourceDefaults(els.sourceSelect.value));
 
 window.addEventListener("DOMContentLoaded", () => {
   initCharts();
   loadSources();
-  loadFailures();
+  // loadFailures() is invoked via applySourceDefaults once sources are loaded.
   openSocket();
 });

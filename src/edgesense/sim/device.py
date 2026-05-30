@@ -63,6 +63,7 @@ class EdgeDevice:
         self.source = source
         self.cfg = cfg
         self._buffer: list[dict[str, float]] = []
+        self._cycle_buffer: list[np.ndarray] = []
         self._scaler: StandardScaler | None = None
         self._model: USADConv1d | None = None
         self._threshold: float | None = None
@@ -80,17 +81,20 @@ class EdgeDevice:
         """Consume the source stream end-to-end."""
 
         spec = self.source.spec
+        cycle_based = spec.cycle_based
         feature_names = spec.feature_names
         window_length = spec.window_length
         stride = spec.stride
         calibration_target = self.cfg.calibration_samples
-        await self._broadcast_phase("calibrating", 0.0, f"collecting {calibration_target:,} samples")
+        unit_label = "cycles" if cycle_based else "samples"
+        await self._broadcast_phase(
+            "calibrating", 0.0, f"collecting {calibration_target:,} {unit_label}"
+        )
 
         async for event in source_stream:
             if event.metadata.get("jumped"):
-                # Source teleported. Drop any history that pre-dates the jump
-                # so the next scored window contains only post-jump data.
                 self._buffer.clear()
+                self._cycle_buffer.clear()
                 self._rolling_scores = []
                 self._window_count = 0
                 await self._broadcast_phase(
@@ -98,55 +102,139 @@ class EdgeDevice:
                     self._phase.progress,
                     f"jumped to row {event.index} ({event.timestamp})",
                 )
-            self._buffer.append(event.features)
-            phase_name = self._phase.name
 
-            if phase_name == "calibrating":
-                progress = min(len(self._buffer) / max(calibration_target, 1), 1.0)
-                if len(self._buffer) % 200 == 0:
-                    await self._broadcast_phase("calibrating", progress, f"{len(self._buffer):,} / {calibration_target:,} samples")
-                await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="calibrating")
-                if len(self._buffer) >= calibration_target and self._training_task is None:
-                    await self._broadcast_phase("training", 0.0, "fitting scaler + USAD model")
-                    self._training_task = asyncio.create_task(self._train_async(feature_names, window_length, stride))
-
-            elif phase_name == "training":
-                # While training runs in a background thread, keep echoing readings unchanged.
-                await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
-
-            elif phase_name == "inferring":
-                # Score windows on a rolling basis at stride cadence.
-                if len(self._buffer) - self._window_count * stride >= window_length:
-                    score, smoothed = await self._score_window(feature_names, window_length)
-                    self._window_count += 1
-                    health = float(
-                        health_score(
-                            np.asarray([smoothed], dtype=np.float32),
-                            self._healthy_reference,
-                            self._threshold,
-                        )[0]
-                    )
-                    alert_level = self._alert_level(smoothed, self._threshold)
-                    await self._publish_reading(event, score=smoothed, health=health, alert_level=alert_level, phase="inferring")
-                else:
-                    last_smoothed = self._rolling_scores[-1] if self._rolling_scores else None
-                    last_health = (
-                        float(
-                            health_score(
-                                np.asarray([last_smoothed], dtype=np.float32),
-                                self._healthy_reference,
-                                self._threshold,
-                            )[0]
-                        )
-                        if last_smoothed is not None and self._threshold is not None
-                        else 100.0
-                    )
-                    alert_level = self._alert_level(last_smoothed, self._threshold)
-                    await self._publish_reading(event, score=last_smoothed, health=last_health, alert_level=alert_level, phase="inferring")
+            if cycle_based:
+                await self._handle_cycle_event(
+                    event, feature_names, window_length, calibration_target
+                )
+            else:
+                await self._handle_sample_event(
+                    event, feature_names, window_length, stride, calibration_target
+                )
 
         if self._training_task is not None:
             await self._training_task
         await self._broadcast_phase("finished", 1.0, "stream complete")
+
+    async def _handle_sample_event(
+        self,
+        event: SensorEvent,
+        feature_names: list[str],
+        window_length: int,
+        stride: int,
+        calibration_target: int,
+    ) -> None:
+        self._buffer.append(event.features)
+        phase_name = self._phase.name
+
+        if phase_name == "calibrating":
+            progress = min(len(self._buffer) / max(calibration_target, 1), 1.0)
+            if len(self._buffer) % 200 == 0:
+                await self._broadcast_phase(
+                    "calibrating",
+                    progress,
+                    f"{len(self._buffer):,} / {calibration_target:,} samples",
+                )
+            await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="calibrating")
+            if len(self._buffer) >= calibration_target and self._training_task is None:
+                await self._broadcast_phase("training", 0.0, "fitting scaler + USAD model")
+                self._training_task = asyncio.create_task(
+                    self._train_async(feature_names, window_length, stride)
+                )
+
+        elif phase_name == "training":
+            await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
+
+        elif phase_name == "inferring":
+            if len(self._buffer) - self._window_count * stride >= window_length:
+                score, smoothed = await self._score_window(feature_names, window_length)
+                self._window_count += 1
+                health = float(
+                    health_score(
+                        np.asarray([smoothed], dtype=np.float32),
+                        self._healthy_reference,
+                        self._threshold,
+                    )[0]
+                )
+                alert_level = self._alert_level(smoothed, self._threshold)
+                await self._publish_reading(event, score=smoothed, health=health, alert_level=alert_level, phase="inferring")
+            else:
+                last_smoothed = self._rolling_scores[-1] if self._rolling_scores else None
+                last_health = (
+                    float(
+                        health_score(
+                            np.asarray([last_smoothed], dtype=np.float32),
+                            self._healthy_reference,
+                            self._threshold,
+                        )[0]
+                    )
+                    if last_smoothed is not None and self._threshold is not None
+                    else 100.0
+                )
+                alert_level = self._alert_level(last_smoothed, self._threshold)
+                await self._publish_reading(event, score=last_smoothed, health=last_health, alert_level=alert_level, phase="inferring")
+
+    async def _handle_cycle_event(
+        self,
+        event: SensorEvent,
+        feature_names: list[str],
+        window_length: int,
+        calibration_target: int,
+    ) -> None:
+        if event.cycle_features is None:
+            raise ValueError(
+                "Cycle-based source emitted an event without cycle_features."
+            )
+        self._cycle_buffer.append(event.cycle_features)
+        count = len(self._cycle_buffer)
+        phase_name = self._phase.name
+
+        if phase_name == "calibrating":
+            progress = min(count / max(calibration_target, 1), 1.0)
+            if count % 25 == 0 or count == calibration_target:
+                await self._broadcast_phase(
+                    "calibrating",
+                    progress,
+                    f"{count:,} / {calibration_target:,} cycles",
+                )
+            await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="calibrating")
+            if count >= calibration_target and self._training_task is None:
+                await self._broadcast_phase("training", 0.0, "fitting scaler + USAD model on cycles")
+                cycles_snapshot = list(self._cycle_buffer)
+                self._training_task = asyncio.create_task(
+                    self._train_async_cycles(cycles_snapshot, window_length)
+                )
+
+        elif phase_name == "training":
+            await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
+
+        elif phase_name == "inferring":
+            window = self._extract_cycle_window(self._cycle_buffer, window_length)
+            if window is None or self._scaler is None or self._model is None:
+                await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="inferring")
+                return
+            score, smoothed = await self._score_cycle_window(window)
+            health = float(
+                health_score(
+                    np.asarray([smoothed], dtype=np.float32),
+                    self._healthy_reference,
+                    self._threshold,
+                )[0]
+            )
+            alert_level = self._alert_level(smoothed, self._threshold)
+            await self._publish_reading(
+                event,
+                score=smoothed,
+                health=health,
+                alert_level=alert_level,
+                phase="inferring",
+                extra={
+                    "true_anomaly": event.metadata.get("is_anomaly"),
+                    "true_rul": event.metadata.get("true_rul"),
+                    "unit_id": event.metadata.get("unit_id"),
+                    "unit_cycle": event.metadata.get("unit_cycle"),
+                },
+            )
 
     async def _train_async(self, feature_names: list[str], window_length: int, stride: int) -> None:
         loop = asyncio.get_event_loop()
@@ -264,6 +352,7 @@ class EdgeDevice:
         health: float,
         alert_level: str,
         phase: str,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         payload = {
             "kind": "reading",
@@ -277,7 +366,173 @@ class EdgeDevice:
             "phase": phase,
             "threshold": self._threshold,
         }
+        if extra:
+            for key, value in extra.items():
+                if value is None:
+                    continue
+                payload[key] = value
         await self.bus.publish("ui.event", payload)
+
+    # ---------- Cycle-based path ----------
+
+    async def _train_async_cycles(
+        self, cycles: list[np.ndarray], window_length: int
+    ) -> None:
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None, self._train_blocking_cycles, cycles, window_length
+            )
+        except Exception as exc:
+            await self._broadcast_phase("failed", 0.0, f"training error: {exc}")
+            return
+        await self._broadcast_phase(
+            "inferring", 1.0, f"threshold = {self._threshold:.3f}"
+        )
+
+    def _train_blocking_cycles(
+        self, cycles: list[np.ndarray], window_length: int
+    ) -> None:
+        """Cycle-based training: each cycle is one window for Hydraulic; for
+        CMAPSS we concatenate cycles and slide a `window_length`-cycle window.
+        """
+
+        flat = np.concatenate(cycles, axis=0).astype(np.float32)
+        scaler = StandardScaler().fit(flat)
+        scaled_flat = scaler.transform(flat).astype(np.float32)
+
+        # Reconstruct per-cycle scaled arrays.
+        scaled_cycles: list[np.ndarray] = []
+        offset = 0
+        for cycle in cycles:
+            n = cycle.shape[0]
+            scaled_cycles.append(scaled_flat[offset : offset + n])
+            offset += n
+
+        # If each cycle is already at least window_length long, treat each
+        # cycle as a single training window (Hydraulic). Otherwise concatenate
+        # everything and slide a window across (CMAPSS).
+        if scaled_cycles[0].shape[0] >= window_length:
+            windows = np.stack(
+                [c[-window_length:] for c in scaled_cycles], axis=0
+            ).astype(np.float32)
+        else:
+            num_windows = scaled_flat.shape[0] - window_length + 1
+            if num_windows < 32:
+                raise ValueError(
+                    f"Not enough calibration cycles for window_length={window_length}"
+                    f" (got {scaled_flat.shape[0]} cycle-rows total)."
+                )
+            windows = np.stack(
+                [scaled_flat[i : i + window_length] for i in range(num_windows)],
+                axis=0,
+            ).astype(np.float32)
+
+        seed_all(self.cfg.seed)
+        cfg_model = USADConv1dConfig(
+            in_features=windows.shape[2],
+            base_channels=self.cfg.base_channels,
+            latent_channels=self.cfg.latent_channels,
+            downsample_layers=self.cfg.downsample_layers,
+        )
+        model = USADConv1d(cfg_model)
+
+        train_only, val_only = split_train_validation(windows, val_fraction=0.1)
+        train_cfg = TrainingConfig(
+            batch_size=min(self.cfg.batch_size, max(8, train_only.shape[0] // 4)),
+            epochs=self.cfg.max_epochs,
+            learning_rate=self.cfg.learning_rate,
+            adv_ramp_epochs=self.cfg.adv_ramp_epochs,
+            adv_max_weight=self.cfg.adv_max_weight,
+            grad_clip_norm=1.0,
+            seed=self.cfg.seed,
+        )
+        stop_cfg = EarlyStoppingConfig(
+            patience=6, min_delta=1e-4, max_epochs=self.cfg.max_epochs, val_fraction=0.1
+        )
+        train_usad(
+            model,
+            train_only,
+            train_cfg,
+            val_windows=val_only,
+            early_stopping=stop_cfg,
+            show_progress=False,
+        )
+
+        scoring_cfg = ScoringConfig(
+            alpha=self.cfg.scoring_alpha,
+            beta=self.cfg.scoring_beta,
+            batch_size=128,
+        )
+        cal_scores = compute_usad_scores(
+            model, windows, scoring_cfg, show_progress=False
+        )
+
+        # Smooth with a smaller kernel for cycle-based scoring (fewer points).
+        kernel = max(3, min(self.cfg.median_smoothing_window, max(3, windows.shape[0] // 20)))
+        if kernel % 2 == 0:
+            kernel += 1
+        if kernel >= 3:
+            half = kernel // 2
+            padded = np.pad(cal_scores, (half, half), mode="edge")
+            smoothed = np.array(
+                [np.median(padded[i : i + kernel]) for i in range(len(cal_scores))],
+                dtype=np.float32,
+            )
+        else:
+            smoothed = cal_scores
+
+        threshold = float(np.percentile(smoothed, self.cfg.healthy_quantile))
+
+        self._scaler = scaler
+        self._model = model
+        self._threshold = threshold
+        self._healthy_reference = smoothed
+        self._rolling_scores = list(smoothed[-50:])
+        self._window_count = 0
+
+    def _extract_cycle_window(
+        self, cycle_buffer: list[np.ndarray], window_length: int
+    ) -> np.ndarray | None:
+        """Build a (window_length, F) window from the buffer's tail."""
+
+        if not cycle_buffer:
+            return None
+        last = cycle_buffer[-1]
+        if last.shape[0] >= window_length:
+            return last[-window_length:]
+        # Concatenate the most-recent cycles until total rows >= window_length.
+        total = 0
+        pieces: list[np.ndarray] = []
+        for arr in reversed(cycle_buffer):
+            pieces.append(arr)
+            total += arr.shape[0]
+            if total >= window_length:
+                break
+        if total < window_length:
+            return None
+        pieces.reverse()
+        concat = np.concatenate(pieces, axis=0)
+        return concat[-window_length:]
+
+    async def _score_cycle_window(self, window_raw: np.ndarray) -> tuple[float, float]:
+        scaled = self._scaler.transform(window_raw).astype(np.float32)
+        window = scaled[np.newaxis, ...]
+        scoring_cfg = ScoringConfig(
+            alpha=self.cfg.scoring_alpha, beta=self.cfg.scoring_beta, batch_size=1
+        )
+        score = float(
+            compute_usad_scores(self._model, window, scoring_cfg, show_progress=False)[0]
+        )
+        self._rolling_scores.append(score)
+        if len(self._rolling_scores) > 500:
+            self._rolling_scores = self._rolling_scores[-500:]
+        kernel = max(3, min(self.cfg.median_smoothing_window, 11))
+        if kernel % 2 == 0:
+            kernel += 1
+        recent = self._rolling_scores[-kernel:]
+        smoothed = float(np.median(recent)) if recent else score
+        return score, smoothed
 
     async def _broadcast_phase(self, name: str, progress: float, detail: str) -> None:
         self._phase = DevicePhase(name=name, progress=progress, detail=detail)

@@ -187,6 +187,15 @@ body {
 .legend-box { display: inline-block; width: 10px; height: 10px; background: var(--accent); border-radius: 2px; margin-right: 4px; }
 .legend-box.threshold { background: var(--threshold); }
 
+.rul-block { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); width: 100%; }
+.rul-block h3 { margin: 0 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.rul-row { display: flex; justify-content: space-around; gap: 8px; }
+.rul-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.rul-value { font-size: 22px; font-weight: 600; color: var(--text); }
+.rul-value em { font-size: 11px; color: var(--muted); font-style: normal; margin-left: 4px; }
+.rul-value.muted { color: var(--muted); }
+#rul-unit-info { margin-top: 4px; text-align: center; }
+
 .failures-block { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .failures-block h3 { margin: 0 0 4px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
 .failures-list {

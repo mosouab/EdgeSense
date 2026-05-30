@@ -33,6 +33,10 @@ const els = {
   timeMeta: document.getElementById("time-meta"),
   failuresList: document.getElementById("failures-list"),
   failuresHint: document.getElementById("failures-hint"),
+  rulBlock: document.getElementById("rul-block"),
+  rulPred: document.getElementById("rul-pred"),
+  rulTrue: document.getElementById("rul-true"),
+  rulUnitInfo: document.getElementById("rul-unit-info"),
 };
 
 let currentPhase = "idle";
@@ -285,6 +289,16 @@ function handleEvent(ev) {
 
     updateHealth(ev.health ?? null);
     updateAlert(ev.alert_level ?? "ok");
+    if (els.rulBlock && !els.rulBlock.hidden) {
+      els.rulPred.textContent =
+        ev.rul_pred !== undefined && ev.rul_pred !== null ? ev.rul_pred.toFixed(0) : "—";
+      els.rulTrue.textContent =
+        ev.true_rul !== undefined && ev.true_rul !== null ? ev.true_rul.toFixed(0) : "—";
+      if (ev.unit_id !== undefined) {
+        els.rulUnitInfo.textContent =
+          `unit ${ev.unit_id} · cycle ${ev.unit_cycle ?? "?"}`;
+      }
+    }
     els.scoreMeta.textContent =
       ev.score !== null && ev.score !== undefined ? ev.score.toFixed(3) : "—";
     els.thresholdMeta.textContent =
@@ -373,6 +387,10 @@ function applySourceDefaults(sourceName) {
     const unit = spec.natural_unit || "samples";
     const label = els.calibInput.parentElement.querySelector("span");
     if (label) label.textContent = `Calibration ${unit}`;
+    // Show the RUL panel only for sources that produce RUL predictions.
+    if (els.rulBlock) {
+      els.rulBlock.hidden = !(spec.output_kind && spec.output_kind.includes("rul"));
+    }
   }
   primaryChannels = (PRIMARY_CHANNELS_DEFAULTS[sourceName] || PRIMARY_CHANNELS).slice();
   initCharts();

@@ -466,11 +466,14 @@ class CMAPSSSource(DataSource):
         train_unit_ids = sorted(self._dataset.train_units.keys())
         rng.shuffle(train_unit_ids)
 
+        # Include FULL run-to-failure trajectories so the RUL head sees varied
+        # targets (RUL ranges from MAX_RUL down toward 0). USAD will still
+        # mostly see healthy windows because the early cycles of each unit
+        # dominate, but the RUL head needs the late cycles to learn decay.
         sequence: list[dict] = []
         for unit_id in train_unit_ids:
             unit_df = self._dataset.train_units[unit_id]
-            healthy = unit_df[unit_df["rul"] >= MAX_RUL - 1e-3]
-            for _, row in healthy.iterrows():
+            for _, row in unit_df.iterrows():
                 if len(sequence) >= requested:
                     break
                 sequence.append({
@@ -484,14 +487,16 @@ class CMAPSSSource(DataSource):
                 break
         self._calib_end = len(sequence)
 
-        # Then a few interesting test units in order: one short, one medium, one near-failure.
+        # Pick three test units by approximate end-of-sequence RUL so the
+        # demo shows one healthy, one mid-life, and one near-failure engine.
         test_units = sorted(self._dataset.test_units.keys())
-        chosen = []
-        for target_len in (60, 150, 220):
-            best = min(
-                test_units,
-                key=lambda uid: abs(len(self._dataset.test_units[uid]) - target_len),
-            )
+        end_rul = {
+            uid: float(self._dataset.test_units[uid]["rul"].iloc[-1])
+            for uid in test_units
+        }
+        chosen: list[int] = []
+        for target_rul in (15, 60, 100):
+            best = min(test_units, key=lambda uid: abs(end_rul[uid] - target_rul))
             if best not in chosen:
                 chosen.append(best)
         for unit_id in chosen:

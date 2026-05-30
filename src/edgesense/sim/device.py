@@ -21,7 +21,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from ..health import health_score
-from ..models import USADConv1d, USADConv1dConfig
+from ..models import RULHead, USADConv1d, USADConv1dConfig
 from ..scoring import ScoringConfig, compute_usad_scores
 from ..training import EarlyStoppingConfig, TrainingConfig, seed_all, split_train_validation, train_usad
 from .bus import EventBus
@@ -64,8 +64,10 @@ class EdgeDevice:
         self.cfg = cfg
         self._buffer: list[dict[str, float]] = []
         self._cycle_buffer: list[np.ndarray] = []
+        self._cycle_rul_targets: list[float] = []
         self._scaler: StandardScaler | None = None
         self._model: USADConv1d | None = None
+        self._rul_head: RULHead | None = None
         self._threshold: float | None = None
         self._healthy_reference: np.ndarray | None = None
         self._rolling_scores: list[float] = []
@@ -95,6 +97,7 @@ class EdgeDevice:
             if event.metadata.get("jumped"):
                 self._buffer.clear()
                 self._cycle_buffer.clear()
+                self._cycle_rul_targets.clear()
                 self._rolling_scores = []
                 self._window_count = 0
                 await self._broadcast_phase(
@@ -186,6 +189,10 @@ class EdgeDevice:
                 "Cycle-based source emitted an event without cycle_features."
             )
         self._cycle_buffer.append(event.cycle_features)
+        true_rul = event.metadata.get("true_rul")
+        self._cycle_rul_targets.append(
+            float(true_rul) if true_rul is not None else float("nan")
+        )
         count = len(self._cycle_buffer)
         phase_name = self._phase.name
 
@@ -201,8 +208,9 @@ class EdgeDevice:
             if count >= calibration_target and self._training_task is None:
                 await self._broadcast_phase("training", 0.0, "fitting scaler + USAD model on cycles")
                 cycles_snapshot = list(self._cycle_buffer)
+                rul_snapshot = list(self._cycle_rul_targets)
                 self._training_task = asyncio.create_task(
-                    self._train_async_cycles(cycles_snapshot, window_length)
+                    self._train_async_cycles(cycles_snapshot, window_length, rul_snapshot)
                 )
 
         elif phase_name == "training":
@@ -222,6 +230,7 @@ class EdgeDevice:
                 )[0]
             )
             alert_level = self._alert_level(smoothed, self._threshold)
+            rul_pred = self._predict_rul(window) if self._rul_head is not None else None
             await self._publish_reading(
                 event,
                 score=smoothed,
@@ -233,6 +242,7 @@ class EdgeDevice:
                     "true_rul": event.metadata.get("true_rul"),
                     "unit_id": event.metadata.get("unit_id"),
                     "unit_cycle": event.metadata.get("unit_cycle"),
+                    "rul_pred": rul_pred,
                 },
             )
 
@@ -376,25 +386,40 @@ class EdgeDevice:
     # ---------- Cycle-based path ----------
 
     async def _train_async_cycles(
-        self, cycles: list[np.ndarray], window_length: int
+        self,
+        cycles: list[np.ndarray],
+        window_length: int,
+        rul_targets: list[float] | None = None,
     ) -> None:
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
-                None, self._train_blocking_cycles, cycles, window_length
+                None,
+                self._train_blocking_cycles,
+                cycles,
+                window_length,
+                rul_targets or [],
             )
         except Exception as exc:
             await self._broadcast_phase("failed", 0.0, f"training error: {exc}")
             return
-        await self._broadcast_phase(
-            "inferring", 1.0, f"threshold = {self._threshold:.3f}"
-        )
+        detail = f"threshold = {self._threshold:.3f}"
+        if self._rul_head is not None:
+            detail += " | RUL head ready"
+        await self._broadcast_phase("inferring", 1.0, detail)
 
     def _train_blocking_cycles(
-        self, cycles: list[np.ndarray], window_length: int
+        self,
+        cycles: list[np.ndarray],
+        window_length: int,
+        rul_targets: list[float],
     ) -> None:
         """Cycle-based training: each cycle is one window for Hydraulic; for
         CMAPSS we concatenate cycles and slide a `window_length`-cycle window.
+
+        If `rul_targets` are provided and the source declares an "anomaly+rul"
+        output kind, a RULHead is also trained on top of the frozen USAD
+        encoder using the per-window RUL targets.
         """
 
         flat = np.concatenate(cycles, axis=0).astype(np.float32)
@@ -416,6 +441,10 @@ class EdgeDevice:
             windows = np.stack(
                 [c[-window_length:] for c in scaled_cycles], axis=0
             ).astype(np.float32)
+            # Per-cycle layout: window i corresponds to cycle i.
+            window_rul = (
+                np.asarray(rul_targets, dtype=np.float32) if rul_targets else None
+            )
         else:
             num_windows = scaled_flat.shape[0] - window_length + 1
             if num_windows < 32:
@@ -427,6 +456,15 @@ class EdgeDevice:
                 [scaled_flat[i : i + window_length] for i in range(num_windows)],
                 axis=0,
             ).astype(np.float32)
+            # Sliding layout: for single-step cycles (CMAPSS), row i = cycle i,
+            # so window i ends at cycle (window_length - 1 + i).
+            if rul_targets and len(rul_targets) >= window_length:
+                window_rul = np.asarray(
+                    [rul_targets[window_length - 1 + i] for i in range(num_windows)],
+                    dtype=np.float32,
+                )
+            else:
+                window_rul = None
 
         seed_all(self.cfg.seed)
         cfg_model = USADConv1dConfig(
@@ -491,6 +529,14 @@ class EdgeDevice:
         self._rolling_scores = list(smoothed[-50:])
         self._window_count = 0
 
+        # Optional RUL head, trained on top of the frozen encoder.
+        if (
+            getattr(self.source.spec, "output_kind", "anomaly") == "anomaly+rul"
+            and window_rul is not None
+            and np.isfinite(window_rul).all()
+        ):
+            self._rul_head = self._train_rul_head(model, windows, window_rul)
+
     def _extract_cycle_window(
         self, cycle_buffer: list[np.ndarray], window_length: int
     ) -> np.ndarray | None:
@@ -533,6 +579,85 @@ class EdgeDevice:
         recent = self._rolling_scores[-kernel:]
         smoothed = float(np.median(recent)) if recent else score
         return score, smoothed
+
+    def _train_rul_head(
+        self,
+        model: USADConv1d,
+        windows: np.ndarray,
+        window_rul: np.ndarray,
+    ) -> RULHead:
+        """Train a small RUL regression head on top of the frozen USAD encoder."""
+
+        from torch import nn
+
+        device = torch.device("cpu")
+        x = torch.tensor(windows, dtype=torch.float32, device=device)
+        y = torch.tensor(window_rul, dtype=torch.float32, device=device)
+
+        # Pre-compute latents once (encoder is frozen).
+        model.eval()
+        with torch.no_grad():
+            latents: list[torch.Tensor] = []
+            batch = 256
+            for i in range(0, x.shape[0], batch):
+                latents.append(model.encode(x[i : i + batch]))
+            latents_all = torch.cat(latents, dim=0)
+
+        head = RULHead(latent_channels=model.config.latent_channels, hidden_dim=64, dropout=0.2)
+        opt = torch.optim.Adam(head.parameters(), lr=1e-3, weight_decay=1e-5)
+        criterion = nn.MSELoss()
+
+        rng = np.random.default_rng(self.cfg.seed)
+        n = latents_all.shape[0]
+        idx = np.arange(n)
+        rng.shuffle(idx)
+        train_idx = idx[: int(n * 0.9)]
+        val_idx = idx[int(n * 0.9) :]
+        x_train = latents_all[train_idx]
+        y_train = y[train_idx]
+        x_val = latents_all[val_idx]
+        y_val = y[val_idx]
+
+        best_state = None
+        best_val = float("inf")
+        patience_counter = 0
+        for epoch in range(40):
+            head.train()
+            order = np.arange(x_train.shape[0])
+            rng.shuffle(order)
+            for start in range(0, len(order), 128):
+                batch_idx = order[start : start + 128]
+                preds = head(x_train[batch_idx])
+                loss = criterion(preds, y_train[batch_idx])
+                opt.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(head.parameters(), 1.0)
+                opt.step()
+            head.eval()
+            with torch.no_grad():
+                val_loss = float(((head(x_val) - y_val) ** 2).mean())
+            if val_loss < best_val:
+                best_val = val_loss
+                best_state = {k: v.detach().cpu().clone() for k, v in head.state_dict().items()}
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= 6:
+                    break
+        if best_state is not None:
+            head.load_state_dict(best_state)
+        head.eval()
+        return head
+
+    def _predict_rul(self, window_raw: np.ndarray) -> float | None:
+        if self._rul_head is None or self._model is None or self._scaler is None:
+            return None
+        scaled = self._scaler.transform(window_raw).astype(np.float32)
+        window = torch.tensor(scaled[np.newaxis, ...], dtype=torch.float32)
+        with torch.no_grad():
+            latent = self._model.encode(window)
+            pred = float(self._rul_head(latent).item())
+        return max(0.0, pred)
 
     async def _broadcast_phase(self, name: str, progress: float, detail: str) -> None:
         self._phase = DevicePhase(name=name, progress=progress, detail=detail)

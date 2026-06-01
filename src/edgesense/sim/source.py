@@ -440,7 +440,7 @@ class CMAPSSSource(DataSource):
             window_length=30,
             stride=1,
             natural_unit="cycle",
-            suggested_calibration_units=400,
+            suggested_calibration_units=1500,
             cycle_based=True,
             output_kind="anomaly+rul",
         )
@@ -633,7 +633,7 @@ def list_available_sources() -> list[dict[str, Any]]:
             "display_name": "NASA CMAPSS turbofan",
             "available": "true",
             "output_kind": "anomaly+rul",
-            "suggested_calibration": 400,
+            "suggested_calibration": 1500,
             "natural_unit": "cycles",
         },
     ]

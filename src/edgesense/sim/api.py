@@ -61,7 +61,9 @@ class SimulationState:
 
         source = get_source(source_name, calibration_size=calibration_samples)
         device_cfg = DeviceConfig(calibration_samples=calibration_samples)
-        self.device = EdgeDevice(self.bus, source, device_cfg)
+        # Pass the same pause_event so the device can stop the source while
+        # it trains (otherwise the source can exhaust before inference).
+        self.device = EdgeDevice(self.bus, source, device_cfg, pause_event=self.pause_event)
         self.source = source
         self._seek_to = None
         self.task = asyncio.create_task(self._run(source))

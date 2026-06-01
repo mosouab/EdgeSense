@@ -34,7 +34,7 @@ class DeviceConfig:
     healthy_quantile: float = 99.0
     scoring_alpha: float = 0.3
     scoring_beta: float = 0.7
-    median_smoothing_window: int = 11
+    median_smoothing_window: int = 21
     base_channels: int = 32
     latent_channels: int = 64
     downsample_layers: int = 2
@@ -44,6 +44,12 @@ class DeviceConfig:
     adv_ramp_epochs: int = 15
     adv_max_weight: float = 0.3
     seed: int = 42
+    # Alert hysteresis: how many consecutive windows must agree before the
+    # alert state flips, and the release threshold (fraction of the trigger).
+    alert_trigger_streak: int = 4
+    alert_release_streak: int = 6
+    alert_release_fraction: float = 0.65
+    rul_smoothing_window: int = 9
 
 
 @dataclass
@@ -58,10 +64,19 @@ class DevicePhase:
 class EdgeDevice:
     """Run the calibration -> train -> infer lifecycle for one DataSource."""
 
-    def __init__(self, bus: EventBus, source: DataSource, cfg: DeviceConfig) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        source: DataSource,
+        cfg: DeviceConfig,
+        pause_event: asyncio.Event | None = None,
+    ) -> None:
         self.bus = bus
         self.source = source
         self.cfg = cfg
+        # Optional asyncio.Event the device sets while training so the source
+        # pauses and doesn't exhaust its sequence before inference can begin.
+        self._pause_event = pause_event
         self._buffer: list[dict[str, float]] = []
         self._cycle_buffer: list[np.ndarray] = []
         self._cycle_rul_targets: list[float] = []
@@ -71,9 +86,16 @@ class EdgeDevice:
         self._threshold: float | None = None
         self._healthy_reference: np.ndarray | None = None
         self._rolling_scores: list[float] = []
+        self._rolling_rul: list[float] = []
         self._phase = DevicePhase(name="awaiting", progress=0.0)
         self._window_count = 0
         self._training_task: asyncio.Task | None = None
+        # Sticky alert state with hysteresis: only flip after N consecutive
+        # windows agree, with separate trigger and release thresholds.
+        self._alert_state: str = "ok"
+        self._above_streak: int = 0
+        self._below_streak: int = 0
+        self._warn_streak: int = 0
 
     @property
     def phase(self) -> DevicePhase:
@@ -99,7 +121,12 @@ class EdgeDevice:
                 self._cycle_buffer.clear()
                 self._cycle_rul_targets.clear()
                 self._rolling_scores = []
+                self._rolling_rul = []
                 self._window_count = 0
+                self._alert_state = "ok"
+                self._above_streak = 0
+                self._below_streak = 0
+                self._warn_streak = 0
                 await self._broadcast_phase(
                     self._phase.name,
                     self._phase.progress,
@@ -230,7 +257,8 @@ class EdgeDevice:
                 )[0]
             )
             alert_level = self._alert_level(smoothed, self._threshold)
-            rul_pred = self._predict_rul(window) if self._rul_head is not None else None
+            rul_pred_raw = self._predict_rul(window) if self._rul_head is not None else None
+            rul_pred_smoothed = self._smooth_rul(rul_pred_raw)
             await self._publish_reading(
                 event,
                 score=smoothed,
@@ -242,19 +270,26 @@ class EdgeDevice:
                     "true_rul": event.metadata.get("true_rul"),
                     "unit_id": event.metadata.get("unit_id"),
                     "unit_cycle": event.metadata.get("unit_cycle"),
-                    "rul_pred": rul_pred,
+                    "rul_pred": rul_pred_smoothed,
+                    "rul_pred_raw": rul_pred_raw,
                 },
             )
 
     async def _train_async(self, feature_names: list[str], window_length: int, stride: int) -> None:
+        if self._pause_event is not None:
+            self._pause_event.set()
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
                 None, self._train_blocking, list(feature_names), window_length, stride
             )
         except Exception as exc:
+            if self._pause_event is not None:
+                self._pause_event.clear()
             await self._broadcast_phase("failed", 0.0, f"training error: {exc}")
             return
+        if self._pause_event is not None:
+            self._pause_event.clear()
         await self._broadcast_phase(
             "inferring", 1.0, f"threshold = {self._threshold:.3f}"
         )
@@ -347,13 +382,66 @@ class EdgeDevice:
         return score, smoothed
 
     def _alert_level(self, smoothed: float | None, threshold: float | None) -> str:
+        """Hysteretic alert state machine.
+
+        - Each call updates above/below streak counters based on `smoothed`
+          vs `threshold` and a release fraction.
+        - 'alert' fires once `cfg.alert_trigger_streak` consecutive windows
+          exceed `threshold`, and clears only after `alert_release_streak`
+          consecutive windows fall below `threshold * release_fraction`.
+        - 'warn' is the intermediate state: score is above the release band
+          but hasn't sustained long enough to declare 'alert'.
+        """
+
         if smoothed is None or threshold is None:
+            self._alert_state = "ok"
+            self._above_streak = 0
+            self._below_streak = 0
+            self._warn_streak = 0
             return "ok"
+
+        release_level = threshold * self.cfg.alert_release_fraction
         if smoothed >= threshold:
-            return "alert"
-        if smoothed >= threshold * 0.6:
-            return "warn"
-        return "ok"
+            self._above_streak += 1
+            self._below_streak = 0
+            self._warn_streak += 1
+        elif smoothed >= release_level:
+            self._above_streak = 0
+            self._below_streak = 0
+            self._warn_streak += 1
+        else:
+            self._above_streak = 0
+            self._below_streak += 1
+            self._warn_streak = 0
+
+        if self._alert_state == "alert":
+            if self._below_streak >= self.cfg.alert_release_streak:
+                self._alert_state = "ok"
+        elif self._alert_state == "warn":
+            if self._above_streak >= self.cfg.alert_trigger_streak:
+                self._alert_state = "alert"
+            elif self._below_streak >= self.cfg.alert_release_streak:
+                self._alert_state = "ok"
+        else:  # ok
+            if self._above_streak >= self.cfg.alert_trigger_streak:
+                self._alert_state = "alert"
+            elif self._warn_streak >= max(2, self.cfg.alert_trigger_streak // 2):
+                self._alert_state = "warn"
+        return self._alert_state
+
+    def _smooth_rul(self, raw_rul: float | None) -> float | None:
+        """Median-smooth recent RUL predictions to suppress per-cycle jitter."""
+
+        if raw_rul is None:
+            return None
+        self._rolling_rul.append(float(raw_rul))
+        kernel = max(3, self.cfg.rul_smoothing_window)
+        if kernel % 2 == 0:
+            kernel += 1
+        if len(self._rolling_rul) > 200:
+            self._rolling_rul = self._rolling_rul[-200:]
+        recent = self._rolling_rul[-kernel:]
+        return float(np.median(recent))
 
     async def _publish_reading(
         self,
@@ -391,6 +479,10 @@ class EdgeDevice:
         window_length: int,
         rul_targets: list[float] | None = None,
     ) -> None:
+        # Pause source so it doesn't burn through its sequence while training
+        # runs in the background thread.
+        if self._pause_event is not None:
+            self._pause_event.set()
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
@@ -401,8 +493,12 @@ class EdgeDevice:
                 rul_targets or [],
             )
         except Exception as exc:
+            if self._pause_event is not None:
+                self._pause_event.clear()
             await self._broadcast_phase("failed", 0.0, f"training error: {exc}")
             return
+        if self._pause_event is not None:
+            self._pause_event.clear()
         detail = f"threshold = {self._threshold:.3f}"
         if self._rul_head is not None:
             detail += " | RUL head ready"

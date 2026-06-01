@@ -259,6 +259,18 @@ class EdgeDevice:
             alert_level = self._alert_level(smoothed, self._threshold)
             rul_pred_raw = self._predict_rul(window) if self._rul_head is not None else None
             rul_pred_smoothed = self._smooth_rul(rul_pred_raw)
+            hours_per_cycle = getattr(self.source.spec, "hours_per_cycle", None)
+            true_rul = event.metadata.get("true_rul")
+            rul_pred_hours = (
+                float(rul_pred_smoothed) * hours_per_cycle
+                if rul_pred_smoothed is not None and hours_per_cycle
+                else None
+            )
+            rul_true_hours = (
+                float(true_rul) * hours_per_cycle
+                if true_rul is not None and hours_per_cycle
+                else None
+            )
             await self._publish_reading(
                 event,
                 score=smoothed,
@@ -267,11 +279,14 @@ class EdgeDevice:
                 phase="inferring",
                 extra={
                     "true_anomaly": event.metadata.get("is_anomaly"),
-                    "true_rul": event.metadata.get("true_rul"),
+                    "true_rul": true_rul,
                     "unit_id": event.metadata.get("unit_id"),
                     "unit_cycle": event.metadata.get("unit_cycle"),
                     "rul_pred": rul_pred_smoothed,
                     "rul_pred_raw": rul_pred_raw,
+                    "rul_pred_hours": rul_pred_hours,
+                    "rul_true_hours": rul_true_hours,
+                    "cycle_label": getattr(self.source.spec, "cycle_label", "cycle"),
                 },
             )
 

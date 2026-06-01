@@ -34,8 +34,12 @@ const els = {
   failuresList: document.getElementById("failures-list"),
   failuresHint: document.getElementById("failures-hint"),
   rulBlock: document.getElementById("rul-block"),
-  rulPred: document.getElementById("rul-pred"),
-  rulTrue: document.getElementById("rul-true"),
+  rulPredPrimary: document.getElementById("rul-pred-primary"),
+  rulPredUnit: document.getElementById("rul-pred-unit"),
+  rulPredSecondary: document.getElementById("rul-pred-secondary"),
+  rulTruePrimary: document.getElementById("rul-true-primary"),
+  rulTrueUnit: document.getElementById("rul-true-unit"),
+  rulTrueSecondary: document.getElementById("rul-true-secondary"),
   rulUnitInfo: document.getElementById("rul-unit-info"),
 };
 
@@ -262,6 +266,35 @@ async function jumpToFailure(failureId, label) {
   }
 }
 
+function renderRul(rulCycles, rulHours, cycleLabel, primaryEl, unitEl, secondaryEl) {
+  if (rulCycles === null || rulCycles === undefined) {
+    primaryEl.textContent = "—";
+    unitEl.textContent = "";
+    secondaryEl.textContent = "";
+    return;
+  }
+  const cycles = Number(rulCycles);
+  const cycleSuffix = Math.abs(cycles - 1) < 1e-6 ? cycleLabel : `${cycleLabel}s`;
+  if (rulHours === null || rulHours === undefined) {
+    primaryEl.textContent = cycles.toFixed(0);
+    unitEl.textContent = ` ${cycleSuffix}`;
+    secondaryEl.textContent = "";
+    return;
+  }
+  const hours = Number(rulHours);
+  if (hours < 24) {
+    primaryEl.textContent = hours.toFixed(1);
+    unitEl.textContent = " hours";
+  } else if (hours < 60 * 24) {
+    primaryEl.textContent = (hours / 24).toFixed(1);
+    unitEl.textContent = " days";
+  } else {
+    primaryEl.textContent = (hours / (24 * 30)).toFixed(1);
+    unitEl.textContent = " months";
+  }
+  secondaryEl.textContent = `≈ ${cycles.toFixed(0)} ${cycleSuffix}`;
+}
+
 let throttleCounter = 0;
 function handleEvent(ev) {
   if (ev.kind === "phase") {
@@ -290,10 +323,23 @@ function handleEvent(ev) {
     updateHealth(ev.health ?? null);
     updateAlert(ev.alert_level ?? "ok");
     if (els.rulBlock && !els.rulBlock.hidden) {
-      els.rulPred.textContent =
-        ev.rul_pred !== undefined && ev.rul_pred !== null ? ev.rul_pred.toFixed(0) : "—";
-      els.rulTrue.textContent =
-        ev.true_rul !== undefined && ev.true_rul !== null ? ev.true_rul.toFixed(0) : "—";
+      const cycleLabel = ev.cycle_label || "cycle";
+      renderRul(
+        ev.rul_pred,
+        ev.rul_pred_hours,
+        cycleLabel,
+        els.rulPredPrimary,
+        els.rulPredUnit,
+        els.rulPredSecondary,
+      );
+      renderRul(
+        ev.true_rul,
+        ev.rul_true_hours,
+        cycleLabel,
+        els.rulTruePrimary,
+        els.rulTrueUnit,
+        els.rulTrueSecondary,
+      );
       if (ev.unit_id !== undefined) {
         els.rulUnitInfo.textContent =
           `unit ${ev.unit_id} · cycle ${ev.unit_cycle ?? "?"}`;

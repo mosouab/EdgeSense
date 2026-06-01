@@ -82,6 +82,11 @@ class SourceSpec:
     suggested_calibration_units: int
     cycle_based: bool = False
     output_kind: str = "anomaly"  # "anomaly" | "anomaly+rul"
+    # Time-unit translation for the RUL display. `cycle_label` is the
+    # domain-specific name (e.g. "flight cycle"). `hours_per_cycle` lets
+    # the UI render RUL in days/hours instead of abstract cycles.
+    cycle_label: str = "cycle"
+    hours_per_cycle: float | None = None
 
 
 class DataSource(ABC):
@@ -443,6 +448,10 @@ class CMAPSSSource(DataSource):
             suggested_calibration_units=1500,
             cycle_based=True,
             output_kind="anomaly+rul",
+            cycle_label="flight cycle",
+            # Commercial-fleet rule-of-thumb: ~4 flight cycles per day across
+            # short- and long-haul averaged together → ~6 hours per cycle.
+            hours_per_cycle=6.0,
         )
 
     def _ensure_loaded(self) -> None:
@@ -635,5 +644,7 @@ def list_available_sources() -> list[dict[str, Any]]:
             "output_kind": "anomaly+rul",
             "suggested_calibration": 1500,
             "natural_unit": "cycles",
+            "cycle_label": "flight cycle",
+            "hours_per_cycle": 6.0,
         },
     ]

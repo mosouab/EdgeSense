@@ -194,6 +194,7 @@ body {
 .rul-value { font-size: 22px; font-weight: 600; color: var(--text); }
 .rul-value em { font-size: 11px; color: var(--muted); font-style: normal; margin-left: 4px; }
 .rul-value.muted { color: var(--muted); }
+.rul-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
 #rul-unit-info { margin-top: 4px; text-align: center; }
 
 .failures-block { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }

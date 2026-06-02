@@ -33,6 +33,7 @@ const els = {
   timeMeta: document.getElementById("time-meta"),
   failuresList: document.getElementById("failures-list"),
   failuresHint: document.getElementById("failures-hint"),
+  contributorsList: document.getElementById("contributors-list"),
   rulBlock: document.getElementById("rul-block"),
   rulPredPrimary: document.getElementById("rul-pred-primary"),
   rulPredUnit: document.getElementById("rul-pred-unit"),
@@ -266,6 +267,30 @@ async function jumpToFailure(failureId, label) {
   }
 }
 
+function renderContributors(contributors) {
+  if (!els.contributorsList) return;
+  if (!contributors || contributors.length === 0) {
+    els.contributorsList.innerHTML = '<li class="contributors-empty">awaiting inference…</li>';
+    return;
+  }
+  // Scale bars by the largest absolute delta in the current top-K.
+  const maxAbs = contributors.reduce((m, c) => Math.max(m, Math.abs(c.delta_pct)), 0) || 1;
+  const html = contributors.map((c) => {
+    const delta = c.delta_pct;
+    const width = Math.min(100, (Math.max(0, delta) / maxAbs) * 100);
+    const sign = delta >= 0 ? "+" : "−";
+    const cls = delta >= 0 ? "" : "neg";
+    return `
+      <li>
+        <span class="ch-name" title="${c.name}">${c.name}</span>
+        <div class="ch-bar"><span style="width:${width}%"></span></div>
+        <span class="ch-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)} pts</span>
+      </li>
+    `;
+  }).join("");
+  els.contributorsList.innerHTML = html;
+}
+
 function renderRul(rulCycles, rulHours, cycleLabel, primaryEl, unitEl, secondaryEl) {
   if (rulCycles === null || rulCycles === undefined) {
     primaryEl.textContent = "—";
@@ -322,6 +347,7 @@ function handleEvent(ev) {
 
     updateHealth(ev.health ?? null);
     updateAlert(ev.alert_level ?? "ok");
+    if (ev.contributors) renderContributors(ev.contributors);
     if (els.rulBlock && !els.rulBlock.hidden) {
       const cycleLabel = ev.cycle_label || "cycle";
       renderRul(

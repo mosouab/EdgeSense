@@ -62,6 +62,13 @@
       <div class="chart-wrap chart-wrap-fill"><canvas id="score-chart"></canvas></div>
       <p class="sub"><span class="legend-box"></span> Score (smoothed) &nbsp;
         <span class="legend-box threshold"></span> Deployable threshold</p>
+      <div class="contributors-block">
+        <h3>What's driving the anomaly</h3>
+        <ul id="contributors-list" class="contributors-list">
+          <li class="contributors-empty">awaiting inference…</li>
+        </ul>
+        <p class="sub">bars = deviation of this channel's contribution from the calibration baseline</p>
+      </div>
     </section>
 
     <section class="card health">

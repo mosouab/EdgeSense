@@ -87,6 +87,8 @@ class EdgeDevice:
         self._healthy_reference: np.ndarray | None = None
         self._rolling_scores: list[float] = []
         self._rolling_rul: list[float] = []
+        self._rolling_contributions: list[np.ndarray] = []
+        self._baseline_contributions: np.ndarray | None = None
         self._phase = DevicePhase(name="awaiting", progress=0.0)
         self._window_count = 0
         self._training_task: asyncio.Task | None = None
@@ -122,6 +124,7 @@ class EdgeDevice:
                 self._cycle_rul_targets.clear()
                 self._rolling_scores = []
                 self._rolling_rul = []
+                self._rolling_contributions = []
                 self._window_count = 0
                 self._alert_state = "ok"
                 self._above_streak = 0
@@ -177,7 +180,9 @@ class EdgeDevice:
 
         elif phase_name == "inferring":
             if len(self._buffer) - self._window_count * stride >= window_length:
-                score, smoothed = await self._score_window(feature_names, window_length)
+                score, smoothed, contributors = await self._score_window(
+                    feature_names, window_length
+                )
                 self._window_count += 1
                 health = float(
                     health_score(
@@ -187,7 +192,14 @@ class EdgeDevice:
                     )[0]
                 )
                 alert_level = self._alert_level(smoothed, self._threshold)
-                await self._publish_reading(event, score=smoothed, health=health, alert_level=alert_level, phase="inferring")
+                await self._publish_reading(
+                    event,
+                    score=smoothed,
+                    health=health,
+                    alert_level=alert_level,
+                    phase="inferring",
+                    extra={"contributors": contributors},
+                )
             else:
                 last_smoothed = self._rolling_scores[-1] if self._rolling_scores else None
                 last_health = (
@@ -248,7 +260,7 @@ class EdgeDevice:
             if window is None or self._scaler is None or self._model is None:
                 await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="inferring")
                 return
-            score, smoothed = await self._score_cycle_window(window)
+            score, smoothed, contributors = await self._score_cycle_window(window, feature_names)
             health = float(
                 health_score(
                     np.asarray([smoothed], dtype=np.float32),
@@ -287,6 +299,7 @@ class EdgeDevice:
                     "rul_pred_hours": rul_pred_hours,
                     "rul_true_hours": rul_true_hours,
                     "cycle_label": getattr(self.source.spec, "cycle_label", "cycle"),
+                    "contributors": contributors,
                 },
             )
 
@@ -369,12 +382,17 @@ class EdgeDevice:
         self._threshold = threshold
         self._healthy_reference = smoothed
         self._rolling_scores = list(smoothed[-50:])
+        # Per-channel baseline contribution for attribution.
+        self._baseline_contributions = self._build_baseline_contributions(windows)
+        self._rolling_contributions = []
         # Reset window counter so inference scoring picks up from current buffer head.
         # We've already consumed the calibration windows; new windows start AFTER buffer head.
         self._window_count = (len(self._buffer) - window_length) // stride + 1
 
-    async def _score_window(self, feature_names: list[str], window_length: int) -> tuple[float, float]:
-        """Compute the latest window's raw + smoothed score using the trained model."""
+    async def _score_window(
+        self, feature_names: list[str], window_length: int
+    ) -> tuple[float, float, list[dict[str, float | str]]]:
+        """Compute the latest window's raw + smoothed score and per-feature contributors."""
 
         start = len(self._buffer) - window_length
         window_rows = self._buffer[start:]
@@ -387,6 +405,8 @@ class EdgeDevice:
         score = float(
             compute_usad_scores(self._model, window, scoring_cfg, show_progress=False)[0]
         )
+        per_feat = self._compute_feature_contributions(scaled)
+        contributors = self._rank_contributors(per_feat, feature_names)
 
         self._rolling_scores.append(score)
         if len(self._rolling_scores) > 500:
@@ -394,7 +414,7 @@ class EdgeDevice:
         kernel = self.cfg.median_smoothing_window
         recent = self._rolling_scores[-kernel:]
         smoothed = float(np.median(recent)) if recent else score
-        return score, smoothed
+        return score, smoothed, contributors
 
     def _alert_level(self, smoothed: float | None, threshold: float | None) -> str:
         """Hysteretic alert state machine.
@@ -443,6 +463,79 @@ class EdgeDevice:
             elif self._warn_streak >= max(2, self.cfg.alert_trigger_streak // 2):
                 self._alert_state = "warn"
         return self._alert_state
+
+    def _compute_feature_contributions(self, window_scaled: np.ndarray) -> np.ndarray:
+        """Per-feature anomaly contribution for one (T, F) window.
+
+        Returns a (F,) numpy array whose components sum to the same scalar
+        as the USAD score computed from this window (within numerical noise).
+        """
+
+        x = torch.tensor(window_scaled[np.newaxis, ...], dtype=torch.float32)
+        self._model.eval()
+        with torch.no_grad():
+            recon1, _, _ = self._model(x)
+            recon2 = self._model.reconstruct_via_decoder2(recon1)
+            mse_ae1 = ((x - recon1) ** 2).mean(dim=(0, 1)).cpu().numpy()
+            mse_ae2 = ((x - recon2) ** 2).mean(dim=(0, 1)).cpu().numpy()
+        return self.cfg.scoring_alpha * mse_ae1 + self.cfg.scoring_beta * mse_ae2
+
+    def _build_baseline_contributions(self, windows: np.ndarray) -> np.ndarray:
+        """Mean per-feature contribution across a batch of calibration windows."""
+
+        x = torch.tensor(windows, dtype=torch.float32)
+        self._model.eval()
+        per_window: list[np.ndarray] = []
+        with torch.no_grad():
+            batch = 128
+            for i in range(0, x.shape[0], batch):
+                chunk = x[i : i + batch]
+                recon1, _, _ = self._model(chunk)
+                recon2 = self._model.reconstruct_via_decoder2(recon1)
+                m1 = ((chunk - recon1) ** 2).mean(dim=1).cpu().numpy()  # (B, F)
+                m2 = ((chunk - recon2) ** 2).mean(dim=1).cpu().numpy()
+                per_window.append(self.cfg.scoring_alpha * m1 + self.cfg.scoring_beta * m2)
+        stacked = np.concatenate(per_window, axis=0)  # (N, F)
+        return stacked.mean(axis=0)  # (F,)
+
+    def _rank_contributors(
+        self,
+        current: np.ndarray,
+        feature_names: list[str],
+        top_k: int = 5,
+    ) -> list[dict[str, float | str]]:
+        """Top-K channels by positive deviation from baseline, smoothed."""
+
+        # Maintain a rolling window for stable display.
+        self._rolling_contributions.append(current)
+        if len(self._rolling_contributions) > 9:
+            self._rolling_contributions = self._rolling_contributions[-9:]
+        smoothed = np.median(np.stack(self._rolling_contributions, axis=0), axis=0)
+
+        cur_total = max(float(smoothed.sum()), 1e-12)
+        cur_pct = smoothed / cur_total * 100.0
+
+        if self._baseline_contributions is None:
+            base_pct = np.zeros_like(cur_pct)
+        else:
+            base_total = max(float(self._baseline_contributions.sum()), 1e-12)
+            base_pct = self._baseline_contributions / base_total * 100.0
+
+        delta_pct = cur_pct - base_pct
+
+        # Surface only channels whose current share is meaningfully above baseline.
+        order = np.argsort(-delta_pct)
+        contributors: list[dict[str, float | str]] = []
+        for idx in order[:top_k]:
+            contributors.append(
+                {
+                    "name": feature_names[idx],
+                    "delta_pct": float(delta_pct[idx]),
+                    "current_pct": float(cur_pct[idx]),
+                    "baseline_pct": float(base_pct[idx]),
+                }
+            )
+        return contributors
 
     def _smooth_rul(self, raw_rul: float | None) -> float | None:
         """Median-smooth recent RUL predictions to suppress per-cycle jitter."""
@@ -638,6 +731,8 @@ class EdgeDevice:
         self._threshold = threshold
         self._healthy_reference = smoothed
         self._rolling_scores = list(smoothed[-50:])
+        self._baseline_contributions = self._build_baseline_contributions(windows)
+        self._rolling_contributions = []
         self._window_count = 0
 
         # Optional RUL head, trained on top of the frozen encoder.
@@ -672,7 +767,9 @@ class EdgeDevice:
         concat = np.concatenate(pieces, axis=0)
         return concat[-window_length:]
 
-    async def _score_cycle_window(self, window_raw: np.ndarray) -> tuple[float, float]:
+    async def _score_cycle_window(
+        self, window_raw: np.ndarray, feature_names: list[str]
+    ) -> tuple[float, float, list[dict[str, float | str]]]:
         scaled = self._scaler.transform(window_raw).astype(np.float32)
         window = scaled[np.newaxis, ...]
         scoring_cfg = ScoringConfig(
@@ -681,6 +778,8 @@ class EdgeDevice:
         score = float(
             compute_usad_scores(self._model, window, scoring_cfg, show_progress=False)[0]
         )
+        per_feat = self._compute_feature_contributions(scaled)
+        contributors = self._rank_contributors(per_feat, feature_names)
         self._rolling_scores.append(score)
         if len(self._rolling_scores) > 500:
             self._rolling_scores = self._rolling_scores[-500:]
@@ -689,7 +788,7 @@ class EdgeDevice:
             kernel += 1
         recent = self._rolling_scores[-kernel:]
         smoothed = float(np.median(recent)) if recent else score
-        return score, smoothed
+        return score, smoothed, contributors
 
     def _train_rul_head(
         self,

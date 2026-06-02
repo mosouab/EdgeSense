@@ -138,7 +138,18 @@ body {
 .chart-wrap canvas { display: block; }
 
 .scores { grid-column: 1; grid-row: 2; }
-.scores .chart-wrap-fill { flex: 1; min-height: 0; }
+.scores .chart-wrap-fill { flex: 0 1 55%; min-height: 0; }
+
+.contributors-block { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.contributors-block h3 { margin: 0 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.contributors-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.contributors-list li { display: grid; grid-template-columns: 110px 1fr 64px; align-items: center; gap: 8px; font-size: 12px; }
+.contributors-list .ch-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.contributors-list .ch-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.04); position: relative; overflow: hidden; }
+.contributors-list .ch-bar > span { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--alert)); transition: width 200ms ease; }
+.contributors-list .ch-delta { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.contributors-list .ch-delta.neg { color: var(--muted); }
+.contributors-list .contributors-empty { display: block; color: var(--muted); font-style: italic; }
 
 .health { grid-column: 2; grid-row: 1; align-items: center; }
 .gauge { position: relative; width: 220px; height: 130px; margin-top: 6px; }

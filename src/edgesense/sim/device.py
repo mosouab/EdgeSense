@@ -523,13 +523,15 @@ class EdgeDevice:
 
         delta_pct = cur_pct - base_pct
 
-        # Surface only channels whose current share is meaningfully above baseline.
+        descriptions = getattr(self.source.spec, "feature_descriptions", {}) or {}
         order = np.argsort(-delta_pct)
         contributors: list[dict[str, float | str]] = []
         for idx in order[:top_k]:
+            name = feature_names[idx]
             contributors.append(
                 {
-                    "name": feature_names[idx],
+                    "name": name,
+                    "label": descriptions.get(name, name),
                     "delta_pct": float(delta_pct[idx]),
                     "current_pct": float(cur_pct[idx]),
                     "baseline_pct": float(base_pct[idx]),

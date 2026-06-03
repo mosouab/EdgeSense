@@ -267,6 +267,16 @@ async function jumpToFailure(failureId, label) {
   }
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[c]);
+}
+
 function renderContributors(contributors) {
   if (!els.contributorsList) return;
   if (!contributors || contributors.length === 0) {
@@ -280,9 +290,11 @@ function renderContributors(contributors) {
     const width = Math.min(100, (Math.max(0, delta) / maxAbs) * 100);
     const sign = delta >= 0 ? "+" : "−";
     const cls = delta >= 0 ? "" : "neg";
+    const label = escapeHtml(c.label || c.name);
+    const tag = c.label && c.label !== c.name ? `<span class="ch-tag">${escapeHtml(c.name)}</span>` : "";
     return `
       <li>
-        <span class="ch-name" title="${c.name}">${c.name}</span>
+        <span class="ch-name" title="${escapeHtml(c.name)}">${label}${tag}</span>
         <div class="ch-bar"><span style="width:${width}%"></span></div>
         <span class="ch-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)} pts</span>
       </li>

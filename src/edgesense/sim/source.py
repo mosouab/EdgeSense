@@ -87,6 +87,11 @@ class SourceSpec:
     # the UI render RUL in days/hours instead of abstract cycles.
     cycle_label: str = "cycle"
     hours_per_cycle: float | None = None
+    # Operator-readable description for each sensor variable. Maps the raw
+    # variable name (e.g. "TP2") to a short human phrase ("Compressed air
+    # pressure at compressor outlet (bar)"). Used to label the per-channel
+    # attribution panel.
+    feature_descriptions: dict[str, str] = field(default_factory=dict)
 
 
 class DataSource(ABC):
@@ -131,6 +136,23 @@ class MetroPTSource(DataSource):
             stride=50,
             natural_unit="sample",
             suggested_calibration_units=60_000,
+            feature_descriptions={
+                "TP2": "Compressor outlet pressure (bar)",
+                "TP3": "Pneumatic panel pressure (bar)",
+                "H1": "Cyclonic separator filter pressure (bar)",
+                "DV_pressure": "Regulation valve pressure (bar)",
+                "Reservoirs": "Air reservoir pressure (bar)",
+                "Oil_temperature": "Compressor oil temperature (°C)",
+                "Motor_current": "Motor current draw (A)",
+                "COMP": "Air outlet valve state",
+                "DV_eletric": "Regulation valve control signal",
+                "Towers": "Active drying tower",
+                "MPG": "Compressor activation trigger",
+                "LPS": "Low-pressure switch (0.6 bar)",
+                "Pressure_switch": "Backup pressure switch",
+                "Oil_level": "Oil level low signal",
+                "Caudal_impulses": "Air flow impulses",
+            },
         )
 
     def _ensure_loaded(self) -> None:
@@ -269,6 +291,25 @@ class HydraulicSource(DataSource):
             suggested_calibration_units=200,
             cycle_based=True,
             output_kind="anomaly",
+            feature_descriptions={
+                "PS1": "Cooler inlet pressure (bar)",
+                "PS2": "Cooler outlet pressure (bar)",
+                "PS3": "Pump outlet pressure (bar)",
+                "PS4": "Valve inlet pressure (bar)",
+                "PS5": "Accumulator pressure (bar)",
+                "PS6": "Filter differential pressure (bar)",
+                "EPS1": "Motor electrical power (W)",
+                "FS1": "Flow before cooler (L/min)",
+                "FS2": "Flow after cooler (L/min)",
+                "TS1": "Hydraulic pump temperature (°C)",
+                "TS2": "Cooler outlet temperature (°C)",
+                "TS3": "Oil tank temperature (°C)",
+                "TS4": "Hydraulic tank temperature (°C)",
+                "VS1": "Pump vibration (mm/s)",
+                "CE": "Cooling efficiency (%)",
+                "CP": "Cooling power (kW)",
+                "SE": "System efficiency factor (%)",
+            },
         )
 
     def _ensure_loaded(self) -> None:
@@ -452,6 +493,24 @@ class CMAPSSSource(DataSource):
             # Commercial-fleet rule-of-thumb: ~4 flight cycles per day across
             # short- and long-haul averaged together → ~6 hours per cycle.
             hours_per_cycle=6.0,
+            # Mapping from CMAPSS sensor index (per Saxena et al. 2008) to the
+            # turbofan station / instrumentation an operator would recognise.
+            feature_descriptions={
+                "sensor_2": "LPC outlet temperature (T24)",
+                "sensor_3": "HPC outlet temperature (T30)",
+                "sensor_4": "LPT outlet temperature (T50)",
+                "sensor_7": "HPC outlet pressure (P30)",
+                "sensor_8": "Fan speed (physical RPM)",
+                "sensor_9": "Core speed (physical RPM)",
+                "sensor_11": "HPC outlet static pressure (Ps30)",
+                "sensor_12": "Fuel flow / Ps30 ratio",
+                "sensor_13": "Fan speed (corrected RPM)",
+                "sensor_14": "Core speed (corrected RPM)",
+                "sensor_15": "Bypass ratio",
+                "sensor_17": "Bleed enthalpy",
+                "sensor_20": "HPT coolant bleed (lbm/s)",
+                "sensor_21": "LPT coolant bleed (lbm/s)",
+            },
         )
 
     def _ensure_loaded(self) -> None:

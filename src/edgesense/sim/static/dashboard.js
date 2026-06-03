@@ -292,11 +292,15 @@ function renderContributors(contributors) {
     const cls = delta >= 0 ? "" : "neg";
     const label = escapeHtml(c.label || c.name);
     const tag = c.label && c.label !== c.name ? `<span class="ch-tag">${escapeHtml(c.name)}</span>` : "";
+    const action = c.action ? `<div class="ch-action">→ ${escapeHtml(c.action)}</div>` : "";
     return `
       <li>
-        <span class="ch-name" title="${escapeHtml(c.name)}">${label}${tag}</span>
-        <div class="ch-bar"><span style="width:${width}%"></span></div>
-        <span class="ch-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)} pts</span>
+        <div class="ch-row">
+          <span class="ch-name" title="${escapeHtml(c.name)}">${label}${tag}</span>
+          <div class="ch-bar"><span style="width:${width}%"></span></div>
+          <span class="ch-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)} pts</span>
+        </div>
+        ${action}
       </li>
     `;
   }).join("");

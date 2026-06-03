@@ -524,6 +524,7 @@ class EdgeDevice:
         delta_pct = cur_pct - base_pct
 
         descriptions = getattr(self.source.spec, "feature_descriptions", {}) or {}
+        actions = getattr(self.source.spec, "suggested_actions", {}) or {}
         order = np.argsort(-delta_pct)
         contributors: list[dict[str, float | str]] = []
         for idx in order[:top_k]:
@@ -532,6 +533,7 @@ class EdgeDevice:
                 {
                     "name": name,
                     "label": descriptions.get(name, name),
+                    "action": actions.get(name, ""),
                     "delta_pct": float(delta_pct[idx]),
                     "current_pct": float(cur_pct[idx]),
                     "baseline_pct": float(base_pct[idx]),

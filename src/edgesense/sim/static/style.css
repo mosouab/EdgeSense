@@ -143,9 +143,12 @@ body {
 .contributors-block { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .contributors-block h3 { margin: 0 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
 .contributors-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.contributors-list li { display: grid; grid-template-columns: minmax(140px, 1.4fr) 2fr 70px; align-items: center; gap: 10px; font-size: 12px; }
+.contributors-list li { display: block; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.04); }
+.contributors-list li:last-child { border-bottom: none; }
+.contributors-list .ch-row { display: grid; grid-template-columns: minmax(140px, 1.4fr) 2fr 70px; align-items: center; gap: 10px; font-size: 12px; }
 .contributors-list .ch-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .contributors-list .ch-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.contributors-list .ch-action { font-size: 11px; color: var(--muted); margin-top: 3px; padding-left: 2px; }
 .contributors-list .ch-bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.04); position: relative; overflow: hidden; }
 .contributors-list .ch-bar > span { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--alert)); transition: width 200ms ease; }
 .contributors-list .ch-delta { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }

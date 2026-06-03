@@ -92,6 +92,10 @@ class SourceSpec:
     # pressure at compressor outlet (bar)"). Used to label the per-channel
     # attribution panel.
     feature_descriptions: dict[str, str] = field(default_factory=dict)
+    # First-line maintenance prompt per channel. Surfaced under each
+    # contributor row so an operator gets a concrete next step, not just a
+    # sensor name to stare at.
+    suggested_actions: dict[str, str] = field(default_factory=dict)
 
 
 class DataSource(ABC):
@@ -152,6 +156,23 @@ class MetroPTSource(DataSource):
                 "Pressure_switch": "Backup pressure switch",
                 "Oil_level": "Oil level low signal",
                 "Caudal_impulses": "Air flow impulses",
+            },
+            suggested_actions={
+                "TP2": "Inspect compressor outlet & verify discharge line for restrictions",
+                "TP3": "Check downstream piping for leaks; inspect distribution panel",
+                "H1": "Replace cyclonic separator filter and inspect housing seals",
+                "DV_pressure": "Inspect regulation valve and relief mechanism; verify control signal",
+                "Reservoirs": "Check storage reservoirs for leaks; inspect check valves",
+                "Oil_temperature": "Verify oil level and inspect oil cooler / cooling fan",
+                "Motor_current": "Inspect motor windings and bearings; check power supply phases",
+                "COMP": "Test air outlet valve solenoid and control signal continuity",
+                "DV_eletric": "Verify electrical control signal to regulation valve; check wiring",
+                "Towers": "Inspect drying tower changeover valves and control timing",
+                "MPG": "Verify compressor activation trigger threshold (8.2 bar) and circuit",
+                "LPS": "Test low-pressure switch calibration and contact integrity",
+                "Pressure_switch": "Cross-check redundant pressure switch operation",
+                "Oil_level": "Top up oil and inspect for leak path",
+                "Caudal_impulses": "Inspect flow meter and air leak path downstream",
             },
         )
 
@@ -309,6 +330,25 @@ class HydraulicSource(DataSource):
                 "CE": "Cooling efficiency (%)",
                 "CP": "Cooling power (kW)",
                 "SE": "System efficiency factor (%)",
+            },
+            suggested_actions={
+                "PS1": "Inspect cooler inlet line for blockage or restriction",
+                "PS2": "Check cooler outlet path; verify cooler core flow",
+                "PS3": "Inspect pump outlet for cavitation or pressure drop",
+                "PS4": "Check upstream filter element and valve seat",
+                "PS5": "Verify accumulator pre-charge pressure and gas tightness",
+                "PS6": "Replace filter element (high ΔP indicates clogging)",
+                "EPS1": "Inspect motor-pump alignment and load profile",
+                "FS1": "Inspect inlet flow path for obstruction or fitting leak",
+                "FS2": "Inspect cooler core and outlet line for restriction",
+                "TS1": "Check pump bearings and lubrication; verify pump load",
+                "TS2": "Inspect cooler core fouling; verify coolant supply",
+                "TS3": "Audit oil cooling circuit and oil return line",
+                "TS4": "Check overall hydraulic thermal management and fluid level",
+                "VS1": "Inspect pump bearings and shaft alignment for imbalance",
+                "CE": "Audit the full cooling circuit (cooler, fan, coolant flow)",
+                "CP": "Verify cooling fan operation and coolant supply pressure",
+                "SE": "Run full hydraulic-circuit efficiency audit",
             },
         )
 
@@ -510,6 +550,22 @@ class CMAPSSSource(DataSource):
                 "sensor_17": "Bleed enthalpy",
                 "sensor_20": "HPT coolant bleed (lbm/s)",
                 "sensor_21": "LPT coolant bleed (lbm/s)",
+            },
+            suggested_actions={
+                "sensor_2": "Borescope LPC stages; check inlet condition and bird-strike damage",
+                "sensor_3": "Borescope HPC blades; check combustor liner for hot spots",
+                "sensor_4": "Borescope LPT blades; check for tip rub and erosion",
+                "sensor_7": "Verify HPC airflow path; check for compressor fouling or VBV setting",
+                "sensor_8": "Inspect fan blades, spinner, and N1 spool bearings",
+                "sensor_9": "Inspect N2 spool bearings and gearbox health",
+                "sensor_11": "Cross-check P30 sensor against sensor_7; possible probe drift",
+                "sensor_12": "Check fuel metering unit and HP fuel nozzles for partial blockage",
+                "sensor_13": "Cross-check vs physical fan RPM; verify N1 trim",
+                "sensor_14": "Cross-check vs physical core RPM; verify N2 trim",
+                "sensor_15": "Audit overall thrust split and engine balance",
+                "sensor_17": "Inspect bleed valve and customer-bleed air system for leaks",
+                "sensor_20": "Inspect HPT cooling circuit and bleed plumbing",
+                "sensor_21": "Inspect LPT cooling circuit and bleed plumbing",
             },
         )
 

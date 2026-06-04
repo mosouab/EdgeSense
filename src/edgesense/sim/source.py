@@ -87,6 +87,13 @@ class SourceSpec:
     # the UI render RUL in days/hours instead of abstract cycles.
     cycle_label: str = "cycle"
     hours_per_cycle: float | None = None
+    # For datasets where the simulator paces events faster than real asset
+    # time (e.g. CMAPSS treats each cycle as 30 sim seconds but a real
+    # flight cycle is ~6 hours), this ratio converts the
+    # `elapsed_simulated_seconds` field on each event to real asset
+    # seconds so trend forecasts can be expressed in operator-meaningful
+    # time units.
+    simulated_to_asset_seconds: float = 1.0
     # Operator-readable description for each sensor variable. Maps the raw
     # variable name (e.g. "TP2") to a short human phrase ("Compressed air
     # pressure at compressor outlet (bar)"). Used to label the per-channel
@@ -528,11 +535,15 @@ class CMAPSSSource(DataSource):
             natural_unit="cycle",
             suggested_calibration_units=1500,
             cycle_based=True,
-            output_kind="anomaly+rul",
+            output_kind="anomaly",
             cycle_label="flight cycle",
             # Commercial-fleet rule-of-thumb: ~4 flight cycles per day across
             # short- and long-haul averaged together → ~6 hours per cycle.
             hours_per_cycle=6.0,
+            # Sim emits 1 event per 30 simulated seconds; each real flight
+            # cycle is ~6 h = 21 600 s of asset time. Trend forecasts use
+            # this ratio to translate the regression slope into wall-clock.
+            simulated_to_asset_seconds=720.0,
             # Mapping from CMAPSS sensor index (per Saxena et al. 2008) to the
             # turbofan station / instrumentation an operator would recognise.
             feature_descriptions={
@@ -756,10 +767,11 @@ def list_available_sources() -> list[dict[str, Any]]:
             "name": "cmapss",
             "display_name": "NASA CMAPSS turbofan",
             "available": "true",
-            "output_kind": "anomaly+rul",
+            "output_kind": "anomaly",
             "suggested_calibration": 1500,
             "natural_unit": "cycles",
             "cycle_label": "flight cycle",
             "hours_per_cycle": 6.0,
+            "simulated_to_asset_seconds": 720.0,
         },
     ]

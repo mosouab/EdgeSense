@@ -34,14 +34,12 @@ const els = {
   failuresList: document.getElementById("failures-list"),
   failuresHint: document.getElementById("failures-hint"),
   contributorsList: document.getElementById("contributors-list"),
-  rulBlock: document.getElementById("rul-block"),
-  rulPredPrimary: document.getElementById("rul-pred-primary"),
-  rulPredUnit: document.getElementById("rul-pred-unit"),
-  rulPredSecondary: document.getElementById("rul-pred-secondary"),
-  rulTruePrimary: document.getElementById("rul-true-primary"),
-  rulTrueUnit: document.getElementById("rul-true-unit"),
-  rulTrueSecondary: document.getElementById("rul-true-secondary"),
-  rulUnitInfo: document.getElementById("rul-unit-info"),
+  forecastStatus: document.getElementById("forecast-status"),
+  forecastStatusText: document.getElementById("forecast-status-text"),
+  forecastPrimary: document.getElementById("forecast-ttt-primary"),
+  forecastUnit: document.getElementById("forecast-ttt-unit"),
+  forecastBand: document.getElementById("forecast-band"),
+  forecastDetail: document.getElementById("forecast-detail"),
 };
 
 let currentPhase = "idle";
@@ -307,33 +305,75 @@ function renderContributors(contributors) {
   els.contributorsList.innerHTML = html;
 }
 
-function renderRul(rulCycles, rulHours, cycleLabel, primaryEl, unitEl, secondaryEl) {
-  if (rulCycles === null || rulCycles === undefined) {
-    primaryEl.textContent = "—";
-    unitEl.textContent = "";
-    secondaryEl.textContent = "";
+function formatDuration(seconds) {
+  // Returns { value, unit } picking the most legible unit.
+  if (seconds < 60) return { value: seconds.toFixed(0), unit: "seconds" };
+  if (seconds < 3600) return { value: (seconds / 60).toFixed(0), unit: "minutes" };
+  if (seconds < 86400) return { value: (seconds / 3600).toFixed(1), unit: "hours" };
+  if (seconds < 60 * 86400) return { value: (seconds / 86400).toFixed(1), unit: "days" };
+  return { value: (seconds / (30 * 86400)).toFixed(1), unit: "months" };
+}
+
+function renderForecast(forecast) {
+  if (!forecast) {
+    els.forecastStatus.dataset.state = "warming_up";
+    els.forecastStatusText.textContent = "awaiting calibration";
+    els.forecastPrimary.textContent = "—";
+    els.forecastUnit.textContent = "";
+    els.forecastBand.textContent = "";
     return;
   }
-  const cycles = Number(rulCycles);
-  const cycleSuffix = Math.abs(cycles - 1) < 1e-6 ? cycleLabel : `${cycleLabel}s`;
-  if (rulHours === null || rulHours === undefined) {
-    primaryEl.textContent = cycles.toFixed(0);
-    unitEl.textContent = ` ${cycleSuffix}`;
-    secondaryEl.textContent = "";
+  const status = forecast.status || "warming_up";
+  els.forecastStatus.dataset.state = status;
+
+  if (status === "warming_up") {
+    els.forecastStatusText.textContent =
+      `collecting samples (${forecast.samples ?? 0})`;
+    els.forecastPrimary.textContent = "—";
+    els.forecastUnit.textContent = "";
+    els.forecastBand.textContent = "";
     return;
   }
-  const hours = Number(rulHours);
-  if (hours < 24) {
-    primaryEl.textContent = hours.toFixed(1);
-    unitEl.textContent = " hours";
-  } else if (hours < 60 * 24) {
-    primaryEl.textContent = (hours / 24).toFixed(1);
-    unitEl.textContent = " days";
+  if (status === "above_threshold") {
+    els.forecastStatusText.textContent = "score already above threshold";
+    els.forecastPrimary.textContent = "0";
+    els.forecastUnit.textContent = " — alert now";
+    els.forecastBand.textContent = "";
+    return;
+  }
+  if (status === "stable") {
+    els.forecastStatusText.textContent = "no upward trend detected";
+    els.forecastPrimary.textContent = ">";
+    const slope = forecast.slope_per_day ?? 0;
+    const sign = slope >= 0 ? "+" : "−";
+    els.forecastUnit.textContent = " stable";
+    els.forecastBand.textContent = `slope ${sign}${Math.abs(slope).toFixed(3)} score/day`;
+    return;
+  }
+  // trending_up
+  els.forecastStatusText.textContent = "rising trend — alert projected";
+  const ttt = forecast.time_to_alert_seconds;
+  if (ttt === null || ttt === undefined) {
+    els.forecastPrimary.textContent = "—";
+    els.forecastUnit.textContent = "";
+    els.forecastBand.textContent = "";
+    return;
+  }
+  const main = formatDuration(Math.max(0, ttt));
+  els.forecastPrimary.textContent = main.value;
+  els.forecastUnit.textContent = ` ${main.unit}`;
+  if (
+    forecast.time_to_alert_low_seconds !== undefined &&
+    forecast.time_to_alert_high_seconds !== undefined &&
+    forecast.time_to_alert_low_seconds !== null &&
+    forecast.time_to_alert_high_seconds !== null
+  ) {
+    const lo = formatDuration(Math.max(0, forecast.time_to_alert_low_seconds));
+    const hi = formatDuration(Math.max(0, forecast.time_to_alert_high_seconds));
+    els.forecastBand.textContent = `95 % band: ${lo.value} ${lo.unit} → ${hi.value} ${hi.unit}`;
   } else {
-    primaryEl.textContent = (hours / (24 * 30)).toFixed(1);
-    unitEl.textContent = " months";
+    els.forecastBand.textContent = "";
   }
-  secondaryEl.textContent = `≈ ${cycles.toFixed(0)} ${cycleSuffix}`;
 }
 
 let throttleCounter = 0;
@@ -364,29 +404,7 @@ function handleEvent(ev) {
     updateHealth(ev.health ?? null);
     updateAlert(ev.alert_level ?? "ok");
     if (ev.contributors) renderContributors(ev.contributors);
-    if (els.rulBlock && !els.rulBlock.hidden) {
-      const cycleLabel = ev.cycle_label || "cycle";
-      renderRul(
-        ev.rul_pred,
-        ev.rul_pred_hours,
-        cycleLabel,
-        els.rulPredPrimary,
-        els.rulPredUnit,
-        els.rulPredSecondary,
-      );
-      renderRul(
-        ev.true_rul,
-        ev.rul_true_hours,
-        cycleLabel,
-        els.rulTruePrimary,
-        els.rulTrueUnit,
-        els.rulTrueSecondary,
-      );
-      if (ev.unit_id !== undefined) {
-        els.rulUnitInfo.textContent =
-          `unit ${ev.unit_id} · cycle ${ev.unit_cycle ?? "?"}`;
-      }
-    }
+    if (ev.forecast !== undefined) renderForecast(ev.forecast);
     els.scoreMeta.textContent =
       ev.score !== null && ev.score !== undefined ? ev.score.toFixed(3) : "—";
     els.thresholdMeta.textContent =
@@ -475,14 +493,11 @@ function applySourceDefaults(sourceName) {
     const unit = spec.natural_unit || "samples";
     const label = els.calibInput.parentElement.querySelector("span");
     if (label) label.textContent = `Calibration ${unit}`;
-    // Show the RUL panel only for sources that produce RUL predictions.
-    if (els.rulBlock) {
-      els.rulBlock.hidden = !(spec.output_kind && spec.output_kind.includes("rul"));
-    }
   }
   primaryChannels = (PRIMARY_CHANNELS_DEFAULTS[sourceName] || PRIMARY_CHANNELS).slice();
   initCharts();
   loadFailures(sourceName);
+  renderForecast(null);
 }
 
 els.btnStart.addEventListener("click", async () => {

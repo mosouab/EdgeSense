@@ -84,8 +84,15 @@
         </div>
       </div>
       <p class="sub" id="health-detail">awaiting calibration</p>
+    </section>
+
+    <section class="card alert">
+      <h2>Alert state</h2>
+      <div id="alert-pill" class="alert-pill ok">
+        <span class="dot"></span>
+        <span id="alert-text">All clear</span>
+      </div>
       <div id="forecast-block" class="forecast-block">
-        <h3>Forecast</h3>
         <div class="forecast-status" id="forecast-status" data-state="warming_up">
           <span class="forecast-dot"></span>
           <span id="forecast-status-text">awaiting calibration</span>
@@ -94,15 +101,7 @@
           <span id="forecast-ttt-primary">—</span><em id="forecast-ttt-unit"></em>
         </div>
         <div class="forecast-band sub" id="forecast-band"></div>
-        <p class="sub" id="forecast-detail">label-free trend extrapolation of the smoothed anomaly score</p>
-      </div>
-    </section>
-
-    <section class="card alert">
-      <h2>Alert state</h2>
-      <div id="alert-pill" class="alert-pill ok">
-        <span class="dot"></span>
-        <span id="alert-text">All clear</span>
+        <p class="sub" id="forecast-detail">label-free trend extrapolation of the smoothed score</p>
       </div>
       <dl class="metrics">
         <div><dt>Source</dt><dd id="src-name">—</dd></div>

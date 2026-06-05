@@ -752,7 +752,7 @@ def list_available_sources() -> list[dict[str, Any]]:
             "display_name": "Metro do Porto compressor",
             "available": "true",
             "output_kind": "anomaly",
-            "suggested_calibration": 20000,
+            "suggested_calibration": 60000,
             "natural_unit": "samples",
         },
         {

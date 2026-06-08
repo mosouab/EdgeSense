@@ -34,6 +34,12 @@ const els = {
   failuresList: document.getElementById("failures-list"),
   failuresHint: document.getElementById("failures-hint"),
   contributorsList: document.getElementById("contributors-list"),
+  diagnosisBanner: document.getElementById("diagnosis-banner"),
+  diagnosisUrgency: document.getElementById("diagnosis-urgency"),
+  diagnosisUrgencyText: document.getElementById("diagnosis-urgency-text"),
+  diagnosisRoot: document.getElementById("diagnosis-root"),
+  diagnosisEvidence: document.getElementById("diagnosis-evidence"),
+  diagnosisAction: document.getElementById("diagnosis-action"),
   forecastStatus: document.getElementById("forecast-status"),
   forecastStatusText: document.getElementById("forecast-status-text"),
   forecastPrimary: document.getElementById("forecast-ttt-primary"),
@@ -314,6 +320,33 @@ function formatDuration(seconds) {
   return { value: (seconds / (30 * 86400)).toFixed(1), unit: "months" };
 }
 
+function renderDiagnosis(diag) {
+  if (!els.diagnosisBanner) return;
+  if (!diag) {
+    els.diagnosisBanner.dataset.urgency = "info";
+    els.diagnosisUrgencyText.textContent = "awaiting calibration";
+    els.diagnosisRoot.textContent = "EdgeSense — awaiting calibration";
+    els.diagnosisEvidence.innerHTML = "";
+    els.diagnosisAction.textContent = "Start a simulation to begin monitoring.";
+    return;
+  }
+  const urgency = diag.urgency || "info";
+  els.diagnosisBanner.dataset.urgency = urgency;
+  els.diagnosisUrgencyText.textContent = diag.urgency_label || urgency;
+  els.diagnosisRoot.textContent = diag.root_cause || "Anomaly detected";
+  els.diagnosisAction.textContent =
+    diag.recommended_action || "Investigate the flagged channels.";
+
+  const evidence = Array.isArray(diag.evidence) ? diag.evidence : [];
+  if (evidence.length === 0) {
+    els.diagnosisEvidence.innerHTML = "";
+  } else {
+    els.diagnosisEvidence.innerHTML = evidence
+      .map((e) => `<li>${escapeHtml(e)}</li>`)
+      .join("");
+  }
+}
+
 function renderForecast(forecast) {
   if (!forecast) {
     els.forecastStatus.dataset.state = "warming_up";
@@ -405,6 +438,7 @@ function handleEvent(ev) {
     updateAlert(ev.alert_level ?? "ok");
     if (ev.contributors) renderContributors(ev.contributors);
     if (ev.forecast !== undefined) renderForecast(ev.forecast);
+    if (ev.diagnosis !== undefined) renderDiagnosis(ev.diagnosis);
     els.scoreMeta.textContent =
       ev.score !== null && ev.score !== undefined ? ev.score.toFixed(3) : "—";
     els.thresholdMeta.textContent =
@@ -498,6 +532,7 @@ function applySourceDefaults(sourceName) {
   initCharts();
   loadFailures(sourceName);
   renderForecast(null);
+  renderDiagnosis(null);
 }
 
 els.btnStart.addEventListener("click", async () => {

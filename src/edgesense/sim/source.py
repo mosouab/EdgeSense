@@ -103,6 +103,17 @@ class SourceSpec:
     # contributor row so an operator gets a concrete next step, not just a
     # sensor name to stare at.
     suggested_actions: dict[str, str] = field(default_factory=dict)
+    # Multi-channel diagnostic rules. The first rule whose `requires` channels
+    # are ALL present in the current top contributors is used as the root
+    # cause for the diagnostic ticket. Each rule:
+    #   {
+    #     "name":   "Cooler degradation suspected",
+    #     "requires": ["FS2", "TS1"],
+    #     "action": "Inspect cooler core and fluid path ...",
+    #   }
+    # When no rule matches, the device falls back to a single-channel
+    # diagnosis using the top contributor + its suggested_action.
+    diagnosis_rules: list[dict] = field(default_factory=list)
 
 
 class DataSource(ABC):
@@ -181,6 +192,33 @@ class MetroPTSource(DataSource):
                 "Oil_level": "Top up oil and inspect for leak path",
                 "Caudal_impulses": "Inspect flow meter and air leak path downstream",
             },
+            diagnosis_rules=[
+                {
+                    "name": "Air-leak event suspected",
+                    "requires": ["TP2", "Motor_current"],
+                    "action": "Patrol distribution lines for audible leaks; inspect reservoir check valves and verify regulation valve seats.",
+                },
+                {
+                    "name": "Regulation valve fault",
+                    "requires": ["DV_pressure", "DV_eletric"],
+                    "action": "Bench-test regulation valve assembly; verify control signal continuity and replace valve seal kit if leaking.",
+                },
+                {
+                    "name": "Compressor thermal stress",
+                    "requires": ["Oil_temperature", "Motor_current"],
+                    "action": "Top up oil to spec, inspect oil cooler fins and verify cooling-fan operation; reduce duty cycle until checked.",
+                },
+                {
+                    "name": "Distribution / pneumatic-panel leak",
+                    "requires": ["TP2", "TP3"],
+                    "action": "Walk the distribution piping and pneumatic panel with a leak detector; isolate sections to localise.",
+                },
+                {
+                    "name": "Drying-tower switching anomaly",
+                    "requires": ["Towers", "DV_eletric"],
+                    "action": "Inspect drying-tower changeover valves and check timer/sequencer outputs.",
+                },
+            ],
         )
 
     def _ensure_loaded(self) -> None:
@@ -357,6 +395,33 @@ class HydraulicSource(DataSource):
                 "CP": "Verify cooling fan operation and coolant supply pressure",
                 "SE": "Run full hydraulic-circuit efficiency audit",
             },
+            diagnosis_rules=[
+                {
+                    "name": "Cooler degradation suspected",
+                    "requires": ["FS2", "TS1"],
+                    "action": "Inspect cooler core and fluid path; verify pump bearings and cooling-fan/coolant supply. Schedule cooler service.",
+                },
+                {
+                    "name": "Pump mechanical wear",
+                    "requires": ["VS1", "TS1"],
+                    "action": "Vibration-analyse the pump; inspect bearings and shaft alignment. Plan bearing replacement at next stop.",
+                },
+                {
+                    "name": "Filter clogging",
+                    "requires": ["PS6", "PS4"],
+                    "action": "Replace hydraulic filter element; inspect upstream lines for contamination source.",
+                },
+                {
+                    "name": "Accumulator pre-charge loss",
+                    "requires": ["PS5", "PS3"],
+                    "action": "Verify accumulator nitrogen pre-charge and recharge to spec; inspect for gas-side leaks.",
+                },
+                {
+                    "name": "Motor / drive overload",
+                    "requires": ["EPS1", "TS1"],
+                    "action": "Audit motor load and duty profile; inspect drive train alignment and lubrication.",
+                },
+            ],
         )
 
     def _ensure_loaded(self) -> None:
@@ -578,6 +643,33 @@ class CMAPSSSource(DataSource):
                 "sensor_20": "Inspect HPT cooling circuit and bleed plumbing",
                 "sensor_21": "Inspect LPT cooling circuit and bleed plumbing",
             },
+            diagnosis_rules=[
+                {
+                    "name": "HPC section degradation",
+                    "requires": ["sensor_3", "sensor_7"],
+                    "action": "Borescope inspection of HPC blades and stator vanes; check VBV and VSV schedule.",
+                },
+                {
+                    "name": "Turbine section wear",
+                    "requires": ["sensor_4", "sensor_20"],
+                    "action": "Borescope inspection of HPT/LPT blades for tip rub and erosion; verify cooling-flow plumbing.",
+                },
+                {
+                    "name": "Fuel system fault suspected",
+                    "requires": ["sensor_12", "sensor_3"],
+                    "action": "Inspect HP fuel pump and fuel metering unit; flow-test HP fuel nozzles for partial blockage.",
+                },
+                {
+                    "name": "Compressor fouling pattern",
+                    "requires": ["sensor_2", "sensor_3"],
+                    "action": "Schedule on-wing compressor wash; inspect inlet for FOD and ice damage.",
+                },
+                {
+                    "name": "Bleed-air system anomaly",
+                    "requires": ["sensor_17", "sensor_20"],
+                    "action": "Inspect bleed valves, ducting and customer-bleed return path for leaks or stuck valves.",
+                },
+            ],
         )
 
     def _ensure_loaded(self) -> None:

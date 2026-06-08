@@ -94,6 +94,8 @@ class EdgeDevice:
         # Trend forecast buffer: (asset_seconds, smoothed_score) tuples.
         self._forecast_buffer: list[tuple[float, float]] = []
         self._last_forecast: dict[str, Any] | None = None
+        # Cached diagnostic ticket so non-scored events can still publish one.
+        self._last_diagnosis: dict[str, Any] | None = None
         self._phase = DevicePhase(name="awaiting", progress=0.0)
         self._window_count = 0
         self._training_task: asyncio.Task | None = None
@@ -130,6 +132,7 @@ class EdgeDevice:
                 self._rolling_contributions = []
                 self._forecast_buffer = []
                 self._last_forecast = None
+                self._last_diagnosis = None
                 self._window_count = 0
                 self._alert_state = "ok"
                 self._above_streak = 0
@@ -198,6 +201,8 @@ class EdgeDevice:
                 )
                 alert_level = self._alert_level(smoothed, self._threshold)
                 forecast = self._update_forecast(event, smoothed)
+                diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
+                self._last_diagnosis = diagnosis
                 await self._publish_reading(
                     event,
                     score=smoothed,
@@ -207,6 +212,7 @@ class EdgeDevice:
                     extra={
                         "contributors": contributors,
                         "forecast": forecast,
+                        "diagnosis": diagnosis,
                     },
                 )
             else:
@@ -223,13 +229,18 @@ class EdgeDevice:
                     else 100.0
                 )
                 alert_level = self._alert_level(last_smoothed, self._threshold)
+                extras: dict[str, Any] = {}
+                if self._last_forecast:
+                    extras["forecast"] = self._last_forecast
+                if self._last_diagnosis:
+                    extras["diagnosis"] = self._last_diagnosis
                 await self._publish_reading(
                     event,
                     score=last_smoothed,
                     health=last_health,
                     alert_level=alert_level,
                     phase="inferring",
-                    extra={"forecast": self._last_forecast} if self._last_forecast else None,
+                    extra=extras or None,
                 )
 
     async def _handle_cycle_event(
@@ -281,6 +292,8 @@ class EdgeDevice:
             )
             alert_level = self._alert_level(smoothed, self._threshold)
             forecast = self._update_forecast(event, smoothed)
+            diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
+            self._last_diagnosis = diagnosis
             await self._publish_reading(
                 event,
                 score=smoothed,
@@ -293,6 +306,7 @@ class EdgeDevice:
                     "unit_cycle": event.metadata.get("unit_cycle"),
                     "contributors": contributors,
                     "forecast": forecast,
+                    "diagnosis": diagnosis,
                 },
             )
 
@@ -851,6 +865,105 @@ class EdgeDevice:
         recent = self._rolling_scores[-kernel:]
         smoothed = float(np.median(recent)) if recent else score
         return score, smoothed, contributors
+
+    def _build_diagnosis(
+        self,
+        alert_level: str,
+        forecast: dict[str, Any] | None,
+        contributors: list[dict[str, float | str]],
+    ) -> dict[str, Any]:
+        """Synthesise root cause + urgency + recommended action."""
+
+        urgency, urgency_label = self._urgency_from_state(alert_level, forecast)
+
+        # Healthy / warming up: no detailed diagnosis needed.
+        if urgency in ("low", "info"):
+            return {
+                "urgency": urgency,
+                "urgency_label": urgency_label,
+                "root_cause": "All systems nominal",
+                "recommended_action": "No action required. Continue monitoring.",
+                "evidence": [],
+            }
+
+        rules = getattr(self.source.spec, "diagnosis_rules", []) or []
+        actions = getattr(self.source.spec, "suggested_actions", {}) or {}
+        descriptions = getattr(self.source.spec, "feature_descriptions", {}) or {}
+
+        positive = [
+            c for c in contributors
+            if isinstance(c.get("delta_pct"), (int, float)) and c["delta_pct"] > 0
+        ]
+        top_names = {c["name"] for c in positive[:5]}
+
+        matched: dict | None = None
+        for rule in rules:
+            required = rule.get("requires", []) or []
+            if required and all(name in top_names for name in required):
+                matched = rule
+                break
+
+        evidence: list[str] = []
+        for c in positive[:3]:
+            label = c.get("label") or c.get("name")
+            delta = c.get("delta_pct", 0.0)
+            evidence.append(f"{label} +{float(delta):.1f} pts from baseline")
+
+        if matched is not None:
+            return {
+                "urgency": urgency,
+                "urgency_label": urgency_label,
+                "root_cause": matched.get("name", "Multi-channel anomaly"),
+                "recommended_action": matched.get("action", ""),
+                "evidence": evidence,
+                "matched_rule": matched.get("name", ""),
+            }
+
+        # Fallback: single top contributor + its existing suggested action.
+        if positive:
+            top = positive[0]
+            top_name = top.get("name", "")
+            label = top.get("label") or top_name or "Unknown channel"
+            action = actions.get(top_name) or top.get("action") or "Investigate the flagged channel."
+            return {
+                "urgency": urgency,
+                "urgency_label": urgency_label,
+                "root_cause": f"Deviation localised to {label}",
+                "recommended_action": action,
+                "evidence": evidence,
+                "matched_rule": "",
+            }
+
+        return {
+            "urgency": urgency,
+            "urgency_label": urgency_label,
+            "root_cause": "Anomaly detected without clear localisation",
+            "recommended_action": "Run full asset inspection at next maintenance window.",
+            "evidence": [],
+            "matched_rule": "",
+        }
+
+    def _urgency_from_state(
+        self,
+        alert_level: str,
+        forecast: dict[str, Any] | None,
+    ) -> tuple[str, str]:
+        status = (forecast or {}).get("status")
+        ttt = (forecast or {}).get("time_to_alert_seconds")
+
+        if alert_level == "alert" and status == "above_threshold":
+            return "critical", "Critical — investigate now"
+        if alert_level == "alert":
+            return "high", "High — schedule within 24 hours"
+        if status == "trending_up" and ttt is not None and ttt < 7 * 86400:
+            return "high", "High — alert projected within 1 week"
+        if alert_level == "warn":
+            return "medium", "Medium — schedule routine check"
+        if status == "trending_up" and ttt is not None and ttt < 30 * 86400:
+            return "medium", "Medium — alert projected within 1 month"
+        if status == "warming_up":
+            return "info", "Info — system calibrating"
+        return "low", "Low — no action required"
 
     async def _broadcast_phase(self, name: str, progress: float, detail: str) -> None:
         self._phase = DevicePhase(name=name, progress=progress, detail=detail)

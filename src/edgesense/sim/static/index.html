@@ -46,6 +46,21 @@
     <span id="ws-status" class="ws-status" title="WebSocket connection">connecting…</span>
   </section>
 
+  <section id="diagnosis-banner" class="diagnosis-banner" data-urgency="info">
+    <div class="diagnosis-left">
+      <div class="diagnosis-urgency" id="diagnosis-urgency">
+        <span class="diagnosis-dot"></span>
+        <span id="diagnosis-urgency-text">awaiting calibration</span>
+      </div>
+      <h2 class="diagnosis-root" id="diagnosis-root">EdgeSense — awaiting calibration</h2>
+      <ul class="diagnosis-evidence" id="diagnosis-evidence"></ul>
+    </div>
+    <div class="diagnosis-right">
+      <h3>Recommended action</h3>
+      <p id="diagnosis-action">Start a simulation to begin monitoring.</p>
+    </div>
+  </section>
+
   <main class="grid">
     <section class="card sensors">
       <h2>Live sensor traces</h2>

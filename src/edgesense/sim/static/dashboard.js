@@ -1,459 +1,80 @@
-// Dashboard frontend: connects to /ws, drives Chart.js, sends control commands.
+// EdgeSense Operator Console — Vue 3 app.
+// All UI; no application logic. REST + WebSocket contract is identical
+// to the previous build.
 
-const MAX_POINTS = 240;
-const PRIMARY_CHANNELS_DEFAULTS = {
+import {
+  createApp,
+  reactive,
+  ref,
+  computed,
+  onMounted,
+  onUnmounted,
+  watch,
+  nextTick,
+} from "vue";
+
+/* ─────────────────────────────────────────────────────────
+   API client
+   ───────────────────────────────────────────────────────── */
+
+async function jsonRequest(path, opts = {}) {
+  const init = { ...opts };
+  if (init.body && typeof init.body !== "string") {
+    init.headers = { "Content-Type": "application/json", ...(init.headers || {}) };
+    init.body = JSON.stringify(init.body);
+  }
+  const r = await fetch(path, init);
+  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  return r.json().catch(() => ({}));
+}
+
+const api = {
+  sources: () => jsonRequest("/sources"),
+  failures: (source) =>
+    jsonRequest(`/failures${source ? `?source=${encodeURIComponent(source)}` : ""}`),
+  start: (body) => jsonRequest("/start", { method: "POST", body }),
+  stop: () => jsonRequest("/stop", { method: "POST" }),
+  pause: () => jsonRequest("/pause", { method: "POST" }),
+  setSpeed: (speed) => jsonRequest("/speed", { method: "POST", body: { speed } }),
+  jump: (failureId) =>
+    jsonRequest("/jump", { method: "POST", body: { failure_id: failureId } }),
+};
+
+/* ─────────────────────────────────────────────────────────
+   Constants & helpers
+   ───────────────────────────────────────────────────────── */
+
+const MAX_TRACE = 240;
+const PRIMARY_CHANNELS = {
   metropt: ["TP2", "Oil_temperature", "Motor_current", "Reservoirs"],
   hydraulic: ["PS1", "TS1", "EPS1", "CE"],
   cmapss: ["sensor_2", "sensor_3", "sensor_4", "sensor_7"],
 };
-const PRIMARY_CHANNELS = PRIMARY_CHANNELS_DEFAULTS.metropt;
+const SPEED_OPTIONS = [
+  { value: 1, label: "1× — real-time" },
+  { value: 10, label: "10× — 1 sample/s" },
+  { value: 60, label: "60× — 1 min/s" },
+  { value: 600, label: "600× — 10 min/s" },
+  { value: 3000, label: "3000× — 50 min/s" },
+  { value: 5000, label: "5000× — 1.4 h/s" },
+];
 
-const els = {
-  sourceSelect: document.getElementById("source-select"),
-  calibInput: document.getElementById("calib-input"),
-  speedSelect: document.getElementById("speed-select"),
-  btnStart: document.getElementById("btn-start"),
-  btnPause: document.getElementById("btn-pause"),
-  btnStop: document.getElementById("btn-stop"),
-  phasePill: document.getElementById("phase-pill"),
-  phaseName: document.getElementById("phase-name"),
-  phaseDetail: document.getElementById("phase-detail"),
-  progressBar: document.getElementById("progress-bar"),
-  wsStatus: document.getElementById("ws-status"),
-  sensorLabels: document.getElementById("sensor-labels"),
-  healthValue: document.getElementById("health-value"),
-  healthDetail: document.getElementById("health-detail"),
-  healthArc: document.getElementById("health-arc"),
-  alertPill: document.getElementById("alert-pill"),
-  alertText: document.getElementById("alert-text"),
-  srcName: document.getElementById("src-name"),
-  phaseMeta: document.getElementById("phase-meta"),
-  scoreMeta: document.getElementById("score-meta"),
-  thresholdMeta: document.getElementById("threshold-meta"),
-  timeMeta: document.getElementById("time-meta"),
-  failuresList: document.getElementById("failures-list"),
-  failuresHint: document.getElementById("failures-hint"),
-  contributorsList: document.getElementById("contributors-list"),
-  diagnosisBanner: document.getElementById("diagnosis-banner"),
-  diagnosisUrgency: document.getElementById("diagnosis-urgency"),
-  diagnosisUrgencyText: document.getElementById("diagnosis-urgency-text"),
-  diagnosisRoot: document.getElementById("diagnosis-root"),
-  diagnosisEvidence: document.getElementById("diagnosis-evidence"),
-  diagnosisAction: document.getElementById("diagnosis-action"),
-  forecastStatus: document.getElementById("forecast-status"),
-  forecastStatusText: document.getElementById("forecast-status-text"),
-  forecastPrimary: document.getElementById("forecast-ttt-primary"),
-  forecastUnit: document.getElementById("forecast-ttt-unit"),
-  forecastBand: document.getElementById("forecast-band"),
-  forecastDetail: document.getElementById("forecast-detail"),
+const PALETTE = {
+  text: "#e6ecf2",
+  muted: "#7a8497",
+  grid: "rgba(148, 172, 204, 0.08)",
+  accent: "#06b6d4",
+  threshold: "#fb923c",
 };
-
-let currentPhase = "idle";
-
-const palette = {
-  text: "#e6edf6",
-  muted: "#8593a8",
-  grid: "#1c2741",
-  accent: "#4cc9f0",
-  threshold: "#f3722c",
-};
-
-const sensorCharts = [];
-let scoreChart = null;
-let ws = null;
-let primaryChannels = PRIMARY_CHANNELS.slice();
-
-function setStatus(state, text) {
-  els.wsStatus.dataset.state = state;
-  els.wsStatus.textContent = text;
-}
-
-function makeLineChart(canvas, label, color) {
-  return new Chart(canvas, {
-    type: "line",
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label,
-          data: [],
-          borderColor: color,
-          backgroundColor: color,
-          borderWidth: 1.4,
-          pointRadius: 0,
-          tension: 0.15,
-        },
-      ],
-    },
-    options: {
-      animation: false,
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { display: false },
-        y: { ticks: { color: palette.muted, font: { size: 10 } }, grid: { color: palette.grid } },
-      },
-      plugins: {
-        legend: {
-          display: true,
-          position: "top",
-          align: "start",
-          labels: { color: palette.text, font: { size: 11 }, boxWidth: 8 },
-        },
-      },
-    },
-  });
-}
-
-function initCharts() {
-  if (typeof Chart === "undefined") {
-    setStatus("disconnected", "Chart.js failed to load");
-    console.error("Chart.js is undefined — CDN may have failed.");
-    return;
-  }
-  // Destroy any pre-existing chart on each canvas (defensive against re-init).
-  for (let i = 0; i < 4; i++) {
-    const canvas = document.getElementById(`sensor-${i}`);
-    const existing = Chart.getChart?.(canvas);
-    if (existing) existing.destroy();
-    sensorCharts[i] = makeLineChart(canvas, primaryChannels[i] ?? "—", palette.accent);
-  }
-  const scoreCanvas = document.getElementById("score-chart");
-  const existing = Chart.getChart?.(scoreCanvas);
-  if (existing) existing.destroy();
-  scoreChart = new Chart(scoreCanvas, {
-    type: "line",
-    data: {
-      labels: [],
-      datasets: [
-        { label: "Score (smoothed)", data: [], borderColor: palette.accent, borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
-        { label: "Threshold", data: [], borderColor: palette.threshold, borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0 },
-      ],
-    },
-    options: {
-      animation: false,
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { display: false },
-        y: { ticks: { color: palette.muted }, grid: { color: palette.grid } },
-      },
-      plugins: { legend: { display: false } },
-    },
-  });
-  els.sensorLabels.textContent = primaryChannels.slice(0, 4).join(" · ");
-}
-
-function resetChartData() {
-  sensorCharts.forEach((c) => {
-    if (!c) return;
-    c.data.labels.length = 0;
-    c.data.datasets[0].data.length = 0;
-    c.update("none");
-  });
-  if (scoreChart) {
-    scoreChart.data.labels.length = 0;
-    scoreChart.data.datasets[0].data.length = 0;
-    scoreChart.data.datasets[1].data.length = 0;
-    scoreChart.update("none");
-  }
-}
-
-function pushSensor(i, x, y) {
-  const chart = sensorCharts[i];
-  if (!chart) return;
-  chart.data.labels.push(x);
-  chart.data.datasets[0].data.push(y);
-  while (chart.data.labels.length > MAX_POINTS) {
-    chart.data.labels.shift();
-    chart.data.datasets[0].data.shift();
-  }
-}
-
-function pushScorePoint(x, score, threshold) {
-  if (!scoreChart) return;
-  scoreChart.data.labels.push(x);
-  scoreChart.data.datasets[0].data.push(score);
-  scoreChart.data.datasets[1].data.push(threshold ?? null);
-  while (scoreChart.data.labels.length > MAX_POINTS) {
-    scoreChart.data.labels.shift();
-    scoreChart.data.datasets[0].data.shift();
-    scoreChart.data.datasets[1].data.shift();
-  }
-}
-
-function updateHealth(value) {
-  if (value === null || value === undefined) {
-    els.healthValue.textContent = "—";
-    els.healthArc.setAttribute("stroke", palette.muted);
-    return;
-  }
-  const v = Math.max(0, Math.min(100, value));
-  els.healthValue.textContent = v.toFixed(0);
-  const total = 282;
-  const dash = (v / 100) * total;
-  els.healthArc.setAttribute("stroke-dasharray", `${dash} ${total - dash}`);
-  let color = "#06d6a0";
-  if (v < 70) color = "#f7b500";
-  if (v < 30) color = "#ef476f";
-  els.healthArc.setAttribute("stroke", color);
-}
-
-function updateAlert(level) {
-  els.alertPill.className = `alert-pill ${level}`;
-  els.alertText.textContent =
-    level === "alert" ? "ALERT — anomaly above threshold" :
-    level === "warn"  ? "Watch — score elevated" :
-                        "All clear";
-}
-
-function updatePhase(name, progress, detail) {
-  if (name) {
-    els.phaseName.textContent = name;
-    els.phasePill.dataset.phase = name;
-    els.phaseMeta.textContent = name;
-    if (name !== currentPhase) {
-      currentPhase = name;
-      refreshFailureButtons();
-    }
-  }
-  if (detail !== undefined && detail !== null) els.phaseDetail.textContent = detail;
-  if (typeof progress === "number") {
-    els.progressBar.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
-  }
-}
-
-function refreshFailureButtons() {
-  const enabled = currentPhase === "inferring";
-  els.failuresHint.textContent = enabled
-    ? "click a row to jump 10 minutes before the labeled failure starts"
-    : `jumps available once the model is inferring (now: ${currentPhase})`;
-  els.failuresList.querySelectorAll(".btn-jump").forEach((b) => (b.disabled = !enabled));
-}
-
-async function loadFailures(sourceName) {
-  try {
-    const path = sourceName ? `/failures?source=${encodeURIComponent(sourceName)}` : "/failures";
-    const r = await fetch(path);
-    const data = await r.json();
-    els.failuresList.innerHTML = "";
-    (data.failures || []).forEach((f) => {
-      const li = document.createElement("li");
-      const left = document.createElement("span");
-      left.className = "label";
-      const tag = document.createElement("span");
-      tag.className = "source-tag" + (f.source === "audit" ? " audit" : "");
-      tag.textContent = f.source === "audit" ? "audit" : "logged";
-      left.textContent = f.label + " ";
-      left.appendChild(tag);
-      const btn = document.createElement("button");
-      btn.className = "btn-jump";
-      btn.textContent = "▶ jump";
-      btn.dataset.failureId = String(f.id);
-      btn.addEventListener("click", () => jumpToFailure(f.id, f.label));
-      li.appendChild(left);
-      li.appendChild(btn);
-      els.failuresList.appendChild(li);
-    });
-    refreshFailureButtons();
-  } catch (err) {
-    console.error("Failed to load failures", err);
-  }
-}
-
-async function jumpToFailure(failureId, label) {
-  const res = await api("/jump", { failure_id: failureId });
-  if (res.status === "ok") {
-    console.log("Jumped to failure", failureId, label, res.index);
-  } else if (res.status === "rejected") {
-    setStatus("disconnected", res.detail || "jump rejected");
-    setTimeout(() => setStatus("connected", "connected"), 1500);
-  }
-}
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "\"": "&quot;",
-    "'": "&#39;",
-  })[c]);
-}
-
-function renderContributors(contributors) {
-  if (!els.contributorsList) return;
-  if (!contributors || contributors.length === 0) {
-    els.contributorsList.innerHTML = '<li class="contributors-empty">awaiting inference…</li>';
-    return;
-  }
-  // Scale bars by the largest absolute delta in the current top-K.
-  const maxAbs = contributors.reduce((m, c) => Math.max(m, Math.abs(c.delta_pct)), 0) || 1;
-  const html = contributors.map((c) => {
-    const delta = c.delta_pct;
-    const width = Math.min(100, (Math.max(0, delta) / maxAbs) * 100);
-    const sign = delta >= 0 ? "+" : "−";
-    const cls = delta >= 0 ? "" : "neg";
-    const label = escapeHtml(c.label || c.name);
-    const tag = c.label && c.label !== c.name ? `<span class="ch-tag">${escapeHtml(c.name)}</span>` : "";
-    const action = c.action ? `<div class="ch-action">→ ${escapeHtml(c.action)}</div>` : "";
-    return `
-      <li>
-        <div class="ch-row">
-          <span class="ch-name" title="${escapeHtml(c.name)}">${label}${tag}</span>
-          <div class="ch-bar"><span style="width:${width}%"></span></div>
-          <span class="ch-delta ${cls}">${sign}${Math.abs(delta).toFixed(1)} pts</span>
-        </div>
-        ${action}
-      </li>
-    `;
-  }).join("");
-  els.contributorsList.innerHTML = html;
-}
-
-function formatDuration(seconds) {
-  // Returns { value, unit } picking the most legible unit.
-  if (seconds < 60) return { value: seconds.toFixed(0), unit: "seconds" };
-  if (seconds < 3600) return { value: (seconds / 60).toFixed(0), unit: "minutes" };
-  if (seconds < 86400) return { value: (seconds / 3600).toFixed(1), unit: "hours" };
-  if (seconds < 60 * 86400) return { value: (seconds / 86400).toFixed(1), unit: "days" };
-  return { value: (seconds / (30 * 86400)).toFixed(1), unit: "months" };
-}
-
-function renderDiagnosis(diag) {
-  if (!els.diagnosisBanner) return;
-  if (!diag) {
-    els.diagnosisBanner.dataset.urgency = "info";
-    els.diagnosisUrgencyText.textContent = "awaiting calibration";
-    els.diagnosisRoot.textContent = "EdgeSense — awaiting calibration";
-    els.diagnosisEvidence.innerHTML = "";
-    els.diagnosisAction.textContent = "Start a simulation to begin monitoring.";
-    return;
-  }
-  const urgency = diag.urgency || "info";
-  els.diagnosisBanner.dataset.urgency = urgency;
-  els.diagnosisUrgencyText.textContent = diag.urgency_label || urgency;
-  els.diagnosisRoot.textContent = diag.root_cause || "Anomaly detected";
-  els.diagnosisAction.textContent =
-    diag.recommended_action || "Investigate the flagged channels.";
-
-  const evidence = Array.isArray(diag.evidence) ? diag.evidence : [];
-  if (evidence.length === 0) {
-    els.diagnosisEvidence.innerHTML = "";
-  } else {
-    els.diagnosisEvidence.innerHTML = evidence
-      .map((e) => `<li>${escapeHtml(e)}</li>`)
-      .join("");
-  }
-}
-
-function renderForecast(forecast) {
-  if (!forecast) {
-    els.forecastStatus.dataset.state = "warming_up";
-    els.forecastStatusText.textContent = "awaiting calibration";
-    els.forecastPrimary.textContent = "—";
-    els.forecastUnit.textContent = "";
-    els.forecastBand.textContent = "";
-    return;
-  }
-  const status = forecast.status || "warming_up";
-  els.forecastStatus.dataset.state = status;
-
-  if (status === "warming_up") {
-    els.forecastStatusText.textContent =
-      `collecting samples (${forecast.samples ?? 0})`;
-    els.forecastPrimary.textContent = "—";
-    els.forecastUnit.textContent = "";
-    els.forecastBand.textContent = "";
-    return;
-  }
-  if (status === "above_threshold") {
-    els.forecastStatusText.textContent = "score already above threshold";
-    els.forecastPrimary.textContent = "0";
-    els.forecastUnit.textContent = " — alert now";
-    els.forecastBand.textContent = "";
-    return;
-  }
-  if (status === "stable") {
-    els.forecastStatusText.textContent = "no upward trend detected";
-    els.forecastPrimary.textContent = ">";
-    const slope = forecast.slope_per_day ?? 0;
-    const sign = slope >= 0 ? "+" : "−";
-    els.forecastUnit.textContent = " stable";
-    els.forecastBand.textContent = `slope ${sign}${Math.abs(slope).toFixed(3)} score/day`;
-    return;
-  }
-  // trending_up
-  els.forecastStatusText.textContent = "rising trend — alert projected";
-  const ttt = forecast.time_to_alert_seconds;
-  if (ttt === null || ttt === undefined) {
-    els.forecastPrimary.textContent = "—";
-    els.forecastUnit.textContent = "";
-    els.forecastBand.textContent = "";
-    return;
-  }
-  const main = formatDuration(Math.max(0, ttt));
-  els.forecastPrimary.textContent = main.value;
-  els.forecastUnit.textContent = ` ${main.unit}`;
-  if (
-    forecast.time_to_alert_low_seconds !== undefined &&
-    forecast.time_to_alert_high_seconds !== undefined &&
-    forecast.time_to_alert_low_seconds !== null &&
-    forecast.time_to_alert_high_seconds !== null
-  ) {
-    const lo = formatDuration(Math.max(0, forecast.time_to_alert_low_seconds));
-    const hi = formatDuration(Math.max(0, forecast.time_to_alert_high_seconds));
-    els.forecastBand.textContent = `95 % band: ${lo.value} ${lo.unit} → ${hi.value} ${hi.unit}`;
-  } else {
-    els.forecastBand.textContent = "";
-  }
-}
-
-let throttleCounter = 0;
-function handleEvent(ev) {
-  if (ev.kind === "phase") {
-    updatePhase(ev.phase, ev.progress, ev.detail);
-    return;
-  }
-  if (ev.kind === "reading") {
-    const time = ev.elapsed_simulated_seconds ?? 0;
-
-    // Push every event into the data buffers; redraw at most every 4th tick
-    // so a flood of 60+/sec events doesn't pin the main thread.
-    primaryChannels.slice(0, 4).forEach((name, i) => {
-      const value = ev.features?.[name];
-      if (value !== undefined) pushSensor(i, time, value);
-    });
-    if (ev.score !== null && ev.score !== undefined) {
-      pushScorePoint(time, ev.score, ev.threshold);
-    }
-
-    throttleCounter = (throttleCounter + 1) % 4;
-    if (throttleCounter === 0) {
-      sensorCharts.forEach((c) => c && c.update("none"));
-      scoreChart && scoreChart.update("none");
-    }
-
-    updateHealth(ev.health ?? null);
-    updateAlert(ev.alert_level ?? "ok");
-    if (ev.contributors) renderContributors(ev.contributors);
-    if (ev.forecast !== undefined) renderForecast(ev.forecast);
-    if (ev.diagnosis !== undefined) renderDiagnosis(ev.diagnosis);
-    els.scoreMeta.textContent =
-      ev.score !== null && ev.score !== undefined ? ev.score.toFixed(3) : "—";
-    els.thresholdMeta.textContent =
-      ev.threshold !== null && ev.threshold !== undefined ? ev.threshold.toFixed(3) : "—";
-    els.timeMeta.textContent = formatSimTime(ev.elapsed_simulated_seconds ?? 0);
-    if (ev.phase) updatePhase(ev.phase, undefined, undefined);
-    els.healthDetail.textContent =
-      ev.phase === "calibrating" ? "calibration in progress" :
-      ev.phase === "training"    ? "training model …" :
-      ev.phase === "inferring"   ? "monitoring live" :
-                                   "awaiting calibration";
-  }
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]),
+  );
 }
 
 function formatSimTime(seconds) {
+  if (!seconds && seconds !== 0) return "—";
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -464,97 +85,833 @@ function formatSimTime(seconds) {
   return parts.join(" ");
 }
 
-function openSocket() {
-  if (ws) {
-    try { ws.close(); } catch (_) {}
-  }
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
-  setStatus("connecting", "connecting…");
-  ws.onopen = () => setStatus("connected", "connected");
-  ws.onerror = (e) => {
-    console.error("WebSocket error", e);
-    setStatus("disconnected", "ws error");
-  };
-  ws.onclose = () => {
-    setStatus("disconnected", "disconnected — retrying");
-    setTimeout(openSocket, 1000);
-  };
-  ws.onmessage = (msg) => {
-    try { handleEvent(JSON.parse(msg.data)); }
-    catch (err) { console.error("Bad event", err, msg.data); }
-  };
+function formatDuration(seconds) {
+  if (seconds == null) return { value: "—", unit: "" };
+  if (seconds < 60) return { value: seconds.toFixed(0), unit: "seconds" };
+  if (seconds < 3600) return { value: (seconds / 60).toFixed(0), unit: "minutes" };
+  if (seconds < 86400) return { value: (seconds / 3600).toFixed(1), unit: "hours" };
+  if (seconds < 60 * 86400)
+    return { value: (seconds / 86400).toFixed(1), unit: "days" };
+  return { value: (seconds / (30 * 86400)).toFixed(1), unit: "months" };
 }
 
-async function api(path, payload) {
-  const opts = payload === undefined
-    ? { method: "POST" }
-    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
-  const r = await fetch(path, opts);
-  if (!r.ok) {
-    console.error(`${path} failed`, r.status);
-    setStatus("disconnected", `${path} ${r.status}`);
-  }
-  return r.json().catch(() => ({}));
+function normalizeAlertLevel(level) {
+  const v = String(level || "ok").toLowerCase();
+  if (v === "critical" || v === "high" || v === "alert") return "alert";
+  if (v === "medium" || v === "warn") return "warn";
+  return "ok";
 }
 
-let sourceCatalog = [];
+function alertText(level) {
+  if (level === "alert") return "ALARM — anomaly above threshold";
+  if (level === "warn") return "WATCH — score elevated";
+  return "CLEAR — all systems nominal";
+}
 
-async function loadSources() {
-  try {
-    const r = await fetch("/sources");
-    const data = await r.json();
-    sourceCatalog = data.sources || [];
-    els.sourceSelect.innerHTML = "";
-    sourceCatalog.forEach((s) => {
-      const opt = document.createElement("option");
-      opt.value = s.name;
-      opt.textContent = s.display_name + (s.available === "false" ? " (coming soon)" : "");
-      if (s.available === "false") opt.disabled = true;
-      els.sourceSelect.appendChild(opt);
+/* ─────────────────────────────────────────────────────────
+   Sparkline (single-channel mini chart) component
+   ───────────────────────────────────────────────────────── */
+
+const Sparkline = {
+  props: { points: { type: Array, required: true }, height: { type: Number, default: 36 } },
+  setup(props) {
+    const canvasRef = ref(null);
+    let chart = null;
+
+    function ensure() {
+      if (!canvasRef.value || typeof Chart === "undefined") return;
+      if (chart) return;
+      chart = new Chart(canvasRef.value, {
+        type: "line",
+        data: {
+          labels: props.points.map((_, i) => i),
+          datasets: [
+            {
+              data: props.points.slice(),
+              borderColor: PALETTE.accent,
+              borderWidth: 1.4,
+              pointRadius: 0,
+              tension: 0.25,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: { x: { display: false }, y: { display: false } },
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        },
+      });
+    }
+
+    onMounted(() => ensure());
+    onUnmounted(() => {
+      if (chart) chart.destroy();
+      chart = null;
     });
-    // Apply defaults for the initial selection.
-    applySourceDefaults(els.sourceSelect.value);
-  } catch (err) {
-    console.error("Failed to load sources", err);
-  }
-}
 
-function applySourceDefaults(sourceName) {
-  const spec = sourceCatalog.find((s) => s.name === sourceName);
-  if (spec) {
-    els.calibInput.value = spec.suggested_calibration;
-    const unit = spec.natural_unit || "samples";
-    const label = els.calibInput.parentElement.querySelector("span");
-    if (label) label.textContent = `Calibration ${unit}`;
-  }
-  primaryChannels = (PRIMARY_CHANNELS_DEFAULTS[sourceName] || PRIMARY_CHANNELS).slice();
-  initCharts();
-  loadFailures(sourceName);
-  renderForecast(null);
-  renderDiagnosis(null);
-}
+    watch(
+      () => props.points,
+      (pts) => {
+        ensure();
+        if (!chart) return;
+        chart.data.labels = pts.map((_, i) => i);
+        chart.data.datasets[0].data = pts.slice();
+        chart.update("none");
+      },
+      { deep: true },
+    );
 
-els.btnStart.addEventListener("click", async () => {
-  resetChartData();
-  const result = await api("/start", {
-    source: els.sourceSelect.value,
-    speed: Number(els.speedSelect.value),
-    calibration_samples: Number(els.calibInput.value),
-  });
-  console.log("/start ->", result);
-  els.srcName.textContent = els.sourceSelect.selectedOptions[0]?.textContent ?? "";
-});
-els.btnPause.addEventListener("click", () => api("/pause"));
-els.btnStop.addEventListener("click", () => api("/stop"));
-els.speedSelect.addEventListener("change", () =>
-  api("/speed", { speed: Number(els.speedSelect.value) })
-);
-els.sourceSelect.addEventListener("change", () => applySourceDefaults(els.sourceSelect.value));
+    return { canvasRef };
+  },
+  template: `
+    <div class="sensor-spark"><canvas ref="canvasRef"></canvas></div>
+  `,
+};
 
-window.addEventListener("DOMContentLoaded", () => {
-  initCharts();
-  loadSources();
-  // loadFailures() is invoked via applySourceDefaults once sources are loaded.
-  openSocket();
-});
+/* ─────────────────────────────────────────────────────────
+   Score chart
+   ───────────────────────────────────────────────────────── */
+
+const ScoreChart = {
+  props: { history: { type: Array, required: true } },
+  setup(props) {
+    const canvasRef = ref(null);
+    let chart = null;
+
+    function ensure() {
+      if (!canvasRef.value || typeof Chart === "undefined") return;
+      if (chart) return;
+      chart = new Chart(canvasRef.value, {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: "Score",
+              data: [],
+              borderColor: PALETTE.accent,
+              backgroundColor: "rgba(6, 182, 212, 0.05)",
+              borderWidth: 1.6,
+              pointRadius: 0,
+              tension: 0.18,
+              fill: true,
+            },
+            {
+              label: "Threshold",
+              data: [],
+              borderColor: PALETTE.threshold,
+              borderWidth: 1.2,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { display: false },
+            y: {
+              ticks: { color: PALETTE.muted, font: { size: 10, family: "JetBrains Mono" } },
+              grid: { color: PALETTE.grid },
+              border: { color: PALETTE.grid },
+            },
+          },
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        },
+      });
+    }
+
+    onMounted(() => {
+      ensure();
+      applyHistory();
+    });
+    onUnmounted(() => {
+      if (chart) chart.destroy();
+      chart = null;
+    });
+
+    function applyHistory() {
+      if (!chart) return;
+      const h = props.history;
+      chart.data.labels = h.map((_, i) => i);
+      chart.data.datasets[0].data = h.map((p) => p.score);
+      chart.data.datasets[1].data = h.map((p) => p.threshold);
+      chart.update("none");
+    }
+
+    watch(() => props.history, applyHistory, { deep: true });
+
+    return { canvasRef };
+  },
+  template: `
+    <div class="score-chart-wrap"><canvas ref="canvasRef"></canvas></div>
+  `,
+};
+
+/* ─────────────────────────────────────────────────────────
+   Gauge — semicircle health % display
+   ───────────────────────────────────────────────────────── */
+
+const HealthGauge = {
+  props: { value: { type: Number, default: null } },
+  setup(props) {
+    const arcLength = 282;
+    const dashArray = computed(() => {
+      if (props.value == null) return `0 ${arcLength}`;
+      const v = Math.max(0, Math.min(100, props.value));
+      const dash = (v / 100) * arcLength;
+      return `${dash} ${arcLength - dash}`;
+    });
+    const color = computed(() => {
+      if (props.value == null) return "var(--text-faint)";
+      if (props.value < 30) return "var(--alert)";
+      if (props.value < 70) return "var(--warn)";
+      return "var(--ok)";
+    });
+    const display = computed(() =>
+      props.value == null ? "—" : Math.round(props.value).toString(),
+    );
+    return { arcLength, dashArray, color, display };
+  },
+  template: `
+    <div class="gauge">
+      <svg viewBox="0 0 200 110" aria-hidden="true">
+        <path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="var(--border)" stroke-width="10" stroke-linecap="round"/>
+        <path d="M10,100 A90,90 0 0,1 190,100" fill="none" :stroke="color" stroke-width="10" stroke-linecap="round" :stroke-dasharray="dashArray"/>
+      </svg>
+      <div class="gauge-value">{{ display }}<em>%</em></div>
+    </div>
+  `,
+};
+
+/* ─────────────────────────────────────────────────────────
+   Root App
+   ───────────────────────────────────────────────────────── */
+
+const App = {
+  components: { Sparkline, ScoreChart, HealthGauge },
+  setup() {
+    /* ── state ─────────────────────────────────────────── */
+
+    const state = reactive({
+      // catalogue
+      sources: [],
+      failures: [],
+
+      // form
+      activeSource: "metropt",
+      calibSamples: 60000,
+      speed: 3000,
+
+      // connection / lifecycle
+      wsState: "connecting",
+      phase: "idle",
+      phaseDetail: "awaiting start",
+      progress: 0,
+      paused: false,
+
+      // live values
+      score: null,
+      threshold: null,
+      health: null,
+      alertLevel: "ok",
+      elapsedSeconds: 0,
+
+      // streams
+      sensorTraces: {}, // {channel: [values]}
+      scoreHistory: [], // [{score, threshold}]
+
+      // synthesis
+      contributors: [],
+      forecast: null,
+      diagnosis: null,
+    });
+
+    const ws = ref(null);
+
+    /* ── derived ───────────────────────────────────────── */
+
+    const sourceSpec = computed(() =>
+      state.sources.find((s) => s.name === state.activeSource),
+    );
+    const primaryChannels = computed(
+      () => PRIMARY_CHANNELS[state.activeSource] || ["—", "—", "—", "—"],
+    );
+    const calibrationUnit = computed(() => sourceSpec.value?.natural_unit || "samples");
+    const isRunning = computed(() => state.phase !== "idle" && state.phase !== "finished");
+    const canStart = computed(() => !isRunning.value && state.wsState === "connected");
+    const canJump = computed(() => state.phase === "inferring");
+
+    const normalizedAlert = computed(() => normalizeAlertLevel(state.alertLevel));
+    const alertMessage = computed(() => alertText(normalizedAlert.value));
+
+    const channelLabels = computed(() => {
+      const map = {};
+      const desc = sourceSpec.value?.feature_descriptions; // not currently exposed via /sources
+      // Server already attaches `label` to each contributor; here we just provide
+      // a fallback display name for the sensor cells.
+      primaryChannels.value.forEach((c) => {
+        map[c] = c.replace(/_/g, " ");
+      });
+      return map;
+    });
+
+    /* ── tx helpers ────────────────────────────────────── */
+
+    function ensureTrace(channel) {
+      if (!state.sensorTraces[channel]) state.sensorTraces[channel] = [];
+      return state.sensorTraces[channel];
+    }
+
+    function pushScorePoint(score, threshold) {
+      state.scoreHistory.push({ score, threshold });
+      if (state.scoreHistory.length > MAX_TRACE) state.scoreHistory.shift();
+    }
+
+    function pushSensor(channel, value) {
+      const arr = ensureTrace(channel);
+      arr.push(value);
+      if (arr.length > MAX_TRACE) arr.shift();
+    }
+
+    function resetStreams() {
+      state.scoreHistory = [];
+      state.sensorTraces = {};
+      state.contributors = [];
+      state.forecast = null;
+      state.diagnosis = null;
+    }
+
+    /* ── WebSocket ─────────────────────────────────────── */
+
+    function openSocket() {
+      if (ws.value) {
+        try { ws.value.close(); } catch (_) {}
+      }
+      state.wsState = "connecting";
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const sock = new WebSocket(`${proto}://${location.host}/ws`);
+      sock.onopen = () => (state.wsState = "connected");
+      sock.onerror = () => (state.wsState = "disconnected");
+      sock.onclose = () => {
+        state.wsState = "disconnected";
+        setTimeout(openSocket, 1000);
+      };
+      sock.onmessage = (msg) => {
+        let ev;
+        try {
+          ev = JSON.parse(msg.data);
+        } catch (e) {
+          return;
+        }
+        handleEvent(ev);
+      };
+      ws.value = sock;
+    }
+
+    function handleEvent(ev) {
+      if (ev.kind === "phase") {
+        state.phase = ev.phase || "idle";
+        state.phaseDetail = ev.detail || "";
+        state.progress = typeof ev.progress === "number" ? ev.progress : state.progress;
+        return;
+      }
+      if (ev.kind !== "reading") return;
+
+      // sensor cells
+      const features = ev.features || {};
+      primaryChannels.value.forEach((channel) => {
+        const v = features[channel];
+        if (typeof v === "number") pushSensor(channel, v);
+      });
+
+      // score
+      if (typeof ev.score === "number") {
+        state.score = ev.score;
+        state.threshold = ev.threshold;
+        pushScorePoint(ev.score, ev.threshold);
+      }
+
+      // top-line
+      if (typeof ev.health === "number") state.health = ev.health;
+      if (ev.alert_level) state.alertLevel = ev.alert_level;
+      if (ev.phase) state.phase = ev.phase;
+      if (typeof ev.elapsed_simulated_seconds === "number")
+        state.elapsedSeconds = ev.elapsed_simulated_seconds;
+
+      // synthesis
+      if (Array.isArray(ev.contributors)) state.contributors = ev.contributors;
+      if (ev.forecast !== undefined) state.forecast = ev.forecast;
+      if (ev.diagnosis !== undefined) state.diagnosis = ev.diagnosis;
+    }
+
+    /* ── REST control ──────────────────────────────────── */
+
+    async function loadSources() {
+      try {
+        const data = await api.sources();
+        state.sources = data.sources || [];
+        const spec = state.sources.find((s) => s.name === state.activeSource);
+        if (spec) state.calibSamples = spec.suggested_calibration ?? state.calibSamples;
+      } catch (e) {
+        console.error("loadSources", e);
+      }
+    }
+
+    async function loadFailures() {
+      try {
+        const data = await api.failures(state.activeSource);
+        state.failures = data.failures || [];
+      } catch (e) {
+        console.error("loadFailures", e);
+      }
+    }
+
+    async function start() {
+      resetStreams();
+      try {
+        await api.start({
+          source: state.activeSource,
+          speed: Number(state.speed),
+          calibration_samples: Number(state.calibSamples),
+        });
+      } catch (e) {
+        console.error("start", e);
+      }
+    }
+
+    async function stop() {
+      try { await api.stop(); } catch (e) { console.error("stop", e); }
+      state.phase = "idle";
+      state.phaseDetail = "stopped";
+    }
+
+    async function togglePause() {
+      try {
+        const res = await api.pause();
+        state.paused = res?.status === "paused";
+      } catch (e) {
+        console.error("pause", e);
+      }
+    }
+
+    async function applySpeed() {
+      try {
+        await api.setSpeed(Number(state.speed));
+      } catch (e) {
+        console.error("speed", e);
+      }
+    }
+
+    async function jumpTo(failureId) {
+      try {
+        await api.jump(failureId);
+      } catch (e) {
+        console.error("jump", e);
+      }
+    }
+
+    /* ── source-change side effects ───────────────────── */
+
+    watch(
+      () => state.activeSource,
+      (name) => {
+        const spec = state.sources.find((s) => s.name === name);
+        if (spec) state.calibSamples = spec.suggested_calibration ?? state.calibSamples;
+        loadFailures();
+      },
+    );
+
+    /* ── lifecycle ─────────────────────────────────────── */
+
+    onMounted(async () => {
+      await loadSources();
+      await loadFailures();
+      openSocket();
+    });
+
+    onUnmounted(() => {
+      if (ws.value) try { ws.value.close(); } catch (_) {}
+    });
+
+    /* ── forecast computed ─────────────────────────────── */
+
+    const forecastDisplay = computed(() => {
+      const f = state.forecast;
+      if (!f) {
+        return {
+          status: "warming_up",
+          statusText: "awaiting calibration",
+          value: "—",
+          unit: "",
+          band: "",
+        };
+      }
+      if (f.status === "warming_up") {
+        return {
+          status: "warming_up",
+          statusText: `collecting (${f.samples ?? 0})`,
+          value: "—",
+          unit: "",
+          band: "",
+        };
+      }
+      if (f.status === "above_threshold") {
+        return {
+          status: "above_threshold",
+          statusText: "score already above threshold",
+          value: "0",
+          unit: "alert now",
+          band: "",
+        };
+      }
+      if (f.status === "stable") {
+        const slope = f.slope_per_day ?? 0;
+        return {
+          status: "stable",
+          statusText: "no upward trend detected",
+          value: ">",
+          unit: "stable",
+          band: `slope ${slope >= 0 ? "+" : "−"}${Math.abs(slope).toFixed(3)} score/day`,
+        };
+      }
+      // trending_up
+      const main = formatDuration(Math.max(0, f.time_to_alert_seconds ?? 0));
+      let band = "";
+      if (f.time_to_alert_low_seconds != null && f.time_to_alert_high_seconds != null) {
+        const lo = formatDuration(Math.max(0, f.time_to_alert_low_seconds));
+        const hi = formatDuration(Math.max(0, f.time_to_alert_high_seconds));
+        band = `95% band: ${lo.value} ${lo.unit} → ${hi.value} ${hi.unit}`;
+      }
+      return {
+        status: "trending_up",
+        statusText: "rising trend — alert projected",
+        value: main.value,
+        unit: main.unit,
+        band,
+      };
+    });
+
+    /* ── exposed to template ───────────────────────────── */
+
+    return {
+      state,
+      sourceSpec,
+      primaryChannels,
+      channelLabels,
+      calibrationUnit,
+      isRunning,
+      canStart,
+      canJump,
+      normalizedAlert,
+      alertMessage,
+      forecastDisplay,
+      SPEED_OPTIONS,
+      // actions
+      start,
+      stop,
+      togglePause,
+      applySpeed,
+      jumpTo,
+      // formatters
+      formatSimTime,
+    };
+  },
+
+  template: `
+  <div class="app">
+
+    <!-- SYSTEM BAR -->
+    <header class="sysbar">
+      <div class="sys-brand">
+        <div class="sys-brand-mark">ES</div>
+        <div>
+          <div class="sys-brand-name">EdgeSense</div>
+          <div class="sys-brand-sub">Operator Console</div>
+        </div>
+      </div>
+      <div class="sys-indicators">
+        <div class="sys-indicator">
+          <span>Mode</span>
+          <span class="sys-indicator-value">{{ (sourceSpec && sourceSpec.display_name) || state.activeSource }}</span>
+        </div>
+        <div class="sys-indicator">
+          <span>Asset state</span>
+          <span class="sys-indicator-value">{{ state.phase.toUpperCase() }}</span>
+        </div>
+        <div class="sys-indicator">
+          <span>Alert</span>
+          <span class="led"
+                :class="{
+                  'led--ok': normalizedAlert === 'ok',
+                  'led--warn': normalizedAlert === 'warn',
+                  'led--alert': normalizedAlert === 'alert',
+                  'led--pulse': normalizedAlert === 'alert',
+                }"></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTROLS -->
+    <section class="controlbar">
+      <label class="field">
+        <span class="field-label">Asset</span>
+        <select v-model="state.activeSource" :disabled="isRunning">
+          <option v-for="s in state.sources" :key="s.name" :value="s.name" :disabled="s.available === 'false'">
+            {{ s.display_name }}{{ s.available === 'false' ? ' (coming soon)' : '' }}
+          </option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Calibration {{ calibrationUnit }}</span>
+        <input type="number" v-model.number="state.calibSamples" min="500" step="500" :disabled="isRunning" />
+      </label>
+      <label class="field">
+        <span class="field-label">Simulation speed</span>
+        <select v-model.number="state.speed" @change="applySpeed">
+          <option v-for="opt in SPEED_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </label>
+      <div class="actions">
+        <button class="btn btn--primary" :disabled="!canStart" @click="start">Start</button>
+        <button class="btn" :data-paused="state.paused" :disabled="!isRunning" @click="togglePause">{{ state.paused ? 'Resume' : 'Pause' }}</button>
+        <button class="btn" :disabled="!isRunning" @click="stop">Stop</button>
+      </div>
+    </section>
+
+    <!-- PHASE STRIP -->
+    <section class="phase-strip">
+      <span class="phase-strip-label">Phase</span>
+      <span class="phase-tag" :data-phase="state.phase">
+        <span class="led"
+              :class="{
+                'led--info': state.phase === 'calibrating',
+                'led--warn': state.phase === 'training',
+                'led--ok': state.phase === 'inferring',
+                'led--alert': state.phase === 'failed',
+                'led--pulse': state.phase === 'training' || state.phase === 'calibrating',
+              }"></span>
+        {{ state.phase.toUpperCase() }}
+      </span>
+      <div class="progress-bar" :aria-valuenow="state.progress * 100">
+        <div class="progress-fill"
+             :class="{ 'progress-fill--indeterminate': state.phase === 'training' }"
+             :style="{ width: (state.progress * 100) + '%' }"></div>
+      </div>
+      <span class="phase-detail">{{ state.phaseDetail || '—' }}</span>
+      <span class="tx-pill" :data-state="state.wsState">
+        <span class="led" :class="{
+          'led--ok': state.wsState === 'connected',
+          'led--info': state.wsState === 'connecting',
+          'led--alert': state.wsState === 'disconnected',
+          'led--pulse': state.wsState !== 'connected',
+        }"></span>
+        TX {{ state.wsState }}
+      </span>
+    </section>
+
+    <!-- DIAGNOSIS BANNER -->
+    <section class="diagnosis" :data-urgency="(state.diagnosis && state.diagnosis.urgency) || 'info'">
+      <div>
+        <span class="urgency-pill" :data-urgency="(state.diagnosis && state.diagnosis.urgency) || 'info'">
+          <span class="led" :class="{
+            'led--ok': state.diagnosis?.urgency === 'low',
+            'led--warn': state.diagnosis?.urgency === 'medium',
+            'led--alert': state.diagnosis?.urgency === 'high' || state.diagnosis?.urgency === 'critical',
+            'led--pulse': state.diagnosis?.urgency === 'critical',
+          }"></span>
+          {{ (state.diagnosis && state.diagnosis.urgency_label) || 'awaiting calibration' }}
+        </span>
+        <h2 class="diagnosis-root">{{ (state.diagnosis && state.diagnosis.root_cause) || 'EdgeSense — awaiting calibration' }}</h2>
+        <ul class="diagnosis-evidence" v-if="state.diagnosis && state.diagnosis.evidence && state.diagnosis.evidence.length">
+          <li v-for="(e, i) in state.diagnosis.evidence" :key="i">{{ e }}</li>
+        </ul>
+      </div>
+      <aside class="action-block">
+        <div class="action-label">Recommended action</div>
+        <div class="action-body">
+          {{ (state.diagnosis && state.diagnosis.recommended_action) || 'Start a simulation to begin monitoring.' }}
+        </div>
+        <div v-if="state.diagnosis && state.diagnosis.matched_rule" class="action-rule">Rule: {{ state.diagnosis.matched_rule }}</div>
+      </aside>
+    </section>
+
+    <!-- WORKSPACE -->
+    <main class="workspace">
+
+      <!-- LEFT COL -->
+      <div class="col">
+
+        <!-- Sensor traces -->
+        <section class="panel">
+          <header class="panel-head">
+            <span class="panel-title">Live sensor traces</span>
+            <span class="panel-head-aux">{{ primaryChannels.join(' · ') }}</span>
+          </header>
+          <div class="panel-body">
+            <div class="sensors-grid">
+              <div v-for="(ch, i) in primaryChannels" :key="ch" class="sensor-cell">
+                <div class="sensor-name">{{ channelLabels[ch] || ch }}</div>
+                <div class="sensor-value">
+                  {{ state.sensorTraces[ch] && state.sensorTraces[ch].length
+                       ? state.sensorTraces[ch][state.sensorTraces[ch].length - 1].toFixed(2)
+                       : '—' }}
+                </div>
+                <Sparkline :points="state.sensorTraces[ch] || []" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Score + attribution -->
+        <section class="panel">
+          <header class="panel-head">
+            <span class="panel-title">Anomaly score</span>
+            <span class="panel-head-aux">{{ state.score == null ? '—' : state.score.toFixed(3) }}</span>
+          </header>
+          <div class="panel-body">
+            <ScoreChart :history="state.scoreHistory" />
+            <div class="score-legend">
+              <span><span class="score-legend-marker"></span>Score (smoothed)</span>
+              <span><span class="score-legend-marker score-legend-marker--threshold"></span>Threshold</span>
+            </div>
+          </div>
+          <div class="panel-section">
+            <header class="panel-head" style="border: none; padding: 0 0 8px;">
+              <span class="panel-title">What's driving it</span>
+              <span class="panel-head-aux">top {{ Math.min(state.contributors.length, 5) }}</span>
+            </header>
+            <div class="attribution-list">
+              <div v-if="state.contributors.length === 0" class="attribution-empty">awaiting inference…</div>
+              <div v-for="c in state.contributors.slice(0, 5)" :key="c.name" class="attribution-row">
+                <div class="attribution-row-main">
+                  <div class="attribution-channel">
+                    <span>{{ c.label || c.name }}</span>
+                    <span class="attribution-tag" v-if="c.label && c.label !== c.name">{{ c.name }}</span>
+                  </div>
+                  <div class="attribution-bar"><span :style="barStyle(c, state.contributors)"></span></div>
+                  <div class="attribution-delta" :class="{ neg: c.delta_pct < 0 }">
+                    {{ c.delta_pct >= 0 ? '+' : '−' }}{{ Math.abs(c.delta_pct).toFixed(1) }} pts
+                  </div>
+                </div>
+                <div v-if="c.action" class="attribution-action">{{ c.action }}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- RIGHT COL -->
+      <div class="col">
+
+        <!-- Health -->
+        <section class="panel">
+          <header class="panel-head">
+            <span class="panel-title">Health</span>
+            <span class="panel-head-aux">{{ state.health == null ? '—' : Math.round(state.health) + '%' }}</span>
+          </header>
+          <div class="health-panel-body">
+            <HealthGauge :value="state.health" />
+            <div class="gauge-caption">
+              {{
+                state.phase === 'calibrating' ? 'calibration in progress' :
+                state.phase === 'training'    ? 'fitting model' :
+                state.phase === 'inferring'   ? 'monitoring live' :
+                'awaiting calibration'
+              }}
+            </div>
+          </div>
+        </section>
+
+        <!-- Alert + Forecast + Metrics + Jump -->
+        <section class="panel">
+          <header class="panel-head">
+            <span class="panel-title">Alert state</span>
+          </header>
+          <div class="panel-body">
+            <div class="alert-pill" :data-level="normalizedAlert">
+              <span class="led" :class="{
+                'led--ok': normalizedAlert === 'ok',
+                'led--warn': normalizedAlert === 'warn',
+                'led--alert': normalizedAlert === 'alert',
+                'led--pulse': normalizedAlert === 'alert',
+              }"></span>
+              {{ alertMessage }}
+            </div>
+
+            <div class="forecast-block">
+              <div style="display:flex; justify-content: space-between; align-items: baseline;">
+                <span class="forecast-status" :data-state="forecastDisplay.status">
+                  <span class="led" :class="{
+                    'led--ok': forecastDisplay.status === 'stable',
+                    'led--warn': forecastDisplay.status === 'trending_up',
+                    'led--alert': forecastDisplay.status === 'above_threshold',
+                  }"></span>
+                  {{ forecastDisplay.statusText }}
+                </span>
+              </div>
+              <div class="forecast-value">{{ forecastDisplay.value }}<em>{{ forecastDisplay.unit }}</em></div>
+              <div class="forecast-band" v-if="forecastDisplay.band">{{ forecastDisplay.band }}</div>
+              <div class="forecast-caption">label-free trend extrapolation</div>
+            </div>
+
+            <div class="metrics">
+              <div class="metric">
+                <span class="metric-label">Score</span>
+                <span class="metric-value">{{ state.score == null ? '—' : state.score.toFixed(3) }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Threshold</span>
+                <span class="metric-value">{{ state.threshold == null ? '—' : state.threshold.toFixed(3) }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Source</span>
+                <span class="metric-value">{{ state.activeSource }}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Sim time</span>
+                <span class="metric-value">{{ formatSimTime(state.elapsedSeconds) }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="panel-section">
+            <header class="panel-head" style="border: none; padding: 0 0 8px;">
+              <span class="panel-title">Jump to event</span>
+              <span class="panel-head-aux">{{ state.failures.length }} markers</span>
+            </header>
+            <p class="jump-hint">{{ canJump ? 'click a row to skip to ~10 min before the labelled event' : 'available once inferring' }}</p>
+            <ul class="jump-list">
+              <li v-for="f in state.failures" :key="f.id" class="jump-item">
+                <span class="jump-name">
+                  {{ f.label }}
+                  <span class="jump-source-tag" :class="{ 'jump-source-tag--audit': f.source === 'audit' }">{{ f.source === 'audit' ? 'audit' : 'logged' }}</span>
+                </span>
+                <button class="jump-btn" :disabled="!canJump" @click="jumpTo(f.id)">▶ jump</button>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+  `,
+
+  methods: {
+    barStyle(c, list) {
+      const maxAbs = Math.max(...list.map((x) => Math.abs(x.delta_pct ?? 0)), 1);
+      const width = Math.min(100, (Math.max(0, c.delta_pct) / maxAbs) * 100);
+      return { width: width + "%" };
+    },
+  },
+};
+
+createApp(App).mount("#app");

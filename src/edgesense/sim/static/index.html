@@ -3,137 +3,22 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>EdgeSense Operator Console</title>
+  <title>EdgeSense — Operator Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "vue": "https://unpkg.com/vue@3.4.27/dist/vue.esm-browser.prod.js"
+      }
+    }
+  </script>
 </head>
 <body>
-  <header class="header">
-    <div class="brand">
-      <span class="logo">⚙</span>
-      <span class="title">EdgeSense <em>operator console</em></span>
-    </div>
-    <div class="controls">
-      <label class="control">
-        <span>Asset</span>
-        <select id="source-select"></select>
-      </label>
-      <label class="control">
-        <span>Calibration samples</span>
-        <input id="calib-input" type="number" min="500" step="500" value="20000" />
-      </label>
-      <label class="control">
-        <span>Simulation speed</span>
-        <select id="speed-select" title="How fast asset-time runs relative to wall-clock">
-          <option value="1">1× — real-time (10 s / sample)</option>
-          <option value="10">10× — 1 sample / sec</option>
-          <option value="60">60× — 1 min / sec</option>
-          <option value="600">600× — 10 min / sec</option>
-          <option value="3000" selected>3000× — 50 min / sec</option>
-          <option value="5000">5000× — 1.4 h / sec</option>
-        </select>
-      </label>
-      <button id="btn-start" class="btn primary">Start</button>
-      <button id="btn-pause" class="btn">Pause</button>
-      <button id="btn-stop" class="btn">Stop</button>
-    </div>
-  </header>
-
-  <section class="phase-strip">
-    <div class="phase-pill" id="phase-pill"><span id="phase-name">idle</span></div>
-    <div class="progress"><div id="progress-bar" class="bar"></div></div>
-    <span id="phase-detail" class="phase-detail">awaiting start</span>
-    <span id="ws-status" class="ws-status" title="WebSocket connection">connecting…</span>
-  </section>
-
-  <section id="diagnosis-banner" class="diagnosis-banner" data-urgency="info">
-    <div class="diagnosis-left">
-      <div class="diagnosis-urgency" id="diagnosis-urgency">
-        <span class="diagnosis-dot"></span>
-        <span id="diagnosis-urgency-text">awaiting calibration</span>
-      </div>
-      <h2 class="diagnosis-root" id="diagnosis-root">EdgeSense — awaiting calibration</h2>
-      <ul class="diagnosis-evidence" id="diagnosis-evidence"></ul>
-    </div>
-    <div class="diagnosis-right">
-      <h3>Recommended action</h3>
-      <p id="diagnosis-action">Start a simulation to begin monitoring.</p>
-    </div>
-  </section>
-
-  <main class="grid">
-    <section class="card sensors">
-      <h2>Live sensor traces</h2>
-      <div class="sensor-grid">
-        <div class="chart-wrap"><canvas id="sensor-0"></canvas></div>
-        <div class="chart-wrap"><canvas id="sensor-1"></canvas></div>
-        <div class="chart-wrap"><canvas id="sensor-2"></canvas></div>
-        <div class="chart-wrap"><canvas id="sensor-3"></canvas></div>
-      </div>
-      <p class="sub" id="sensor-labels"></p>
-    </section>
-
-    <section class="card scores">
-      <h2>Anomaly score</h2>
-      <div class="chart-wrap chart-wrap-fill"><canvas id="score-chart"></canvas></div>
-      <p class="sub"><span class="legend-box"></span> Score (smoothed) &nbsp;
-        <span class="legend-box threshold"></span> Deployable threshold</p>
-      <div class="contributors-block">
-        <h3>What's driving the anomaly</h3>
-        <ul id="contributors-list" class="contributors-list">
-          <li class="contributors-empty">awaiting inference…</li>
-        </ul>
-        <p class="sub">bars = deviation of this channel's contribution from the calibration baseline</p>
-      </div>
-    </section>
-
-    <section class="card health">
-      <h2>Health Score</h2>
-      <div class="gauge">
-        <svg viewBox="0 0 200 110">
-          <path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#1f2933" stroke-width="14" stroke-linecap="round"/>
-          <path id="health-arc" d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke-width="14" stroke-linecap="round" />
-        </svg>
-        <div class="gauge-value">
-          <span id="health-value">—</span>
-          <em>%</em>
-        </div>
-      </div>
-      <p class="sub" id="health-detail">awaiting calibration</p>
-    </section>
-
-    <section class="card alert">
-      <h2>Alert state</h2>
-      <div id="alert-pill" class="alert-pill ok">
-        <span class="dot"></span>
-        <span id="alert-text">All clear</span>
-      </div>
-      <div id="forecast-block" class="forecast-block">
-        <div class="forecast-status" id="forecast-status" data-state="warming_up">
-          <span class="forecast-dot"></span>
-          <span id="forecast-status-text">awaiting calibration</span>
-        </div>
-        <div class="forecast-value">
-          <span id="forecast-ttt-primary">—</span><em id="forecast-ttt-unit"></em>
-        </div>
-        <div class="forecast-band sub" id="forecast-band"></div>
-        <p class="sub" id="forecast-detail">label-free trend extrapolation of the smoothed score</p>
-      </div>
-      <dl class="metrics">
-        <div><dt>Source</dt><dd id="src-name">—</dd></div>
-        <div><dt>Phase</dt><dd id="phase-meta">—</dd></div>
-        <div><dt>Anomaly score</dt><dd id="score-meta">—</dd></div>
-        <div><dt>Threshold</dt><dd id="threshold-meta">—</dd></div>
-        <div><dt>Simulated time</dt><dd id="time-meta">—</dd></div>
-      </dl>
-      <div class="failures-block">
-        <h3>Jump to event</h3>
-        <p class="sub" id="failures-hint">jumps only available once the model is inferring</p>
-        <ul id="failures-list" class="failures-list"></ul>
-      </div>
-    </section>
-  </main>
-
-  <script src="/static/dashboard.js"></script>
+  <div id="app"></div>
+  <script type="module" src="/static/dashboard.js"></script>
 </body>
 </html>

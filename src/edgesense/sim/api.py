@@ -14,9 +14,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..cmms import MockCmmsClient, build_work_request
 from .bus import EventBus
 from .device import DeviceConfig, EdgeDevice
 from .source import DataSource, get_source, list_available_sources
+
+WORK_ORDER_DIR = Path("reports/work_orders")
 
 LOG = logging.getLogger("edgesense.sim")
 
@@ -36,6 +39,19 @@ class SpeedRequest(BaseModel):
 class JumpRequest(BaseModel):
     failure_id: int | None = None
     index: int | None = None
+
+
+class WorkRequestRequest(BaseModel):
+    diagnosis: dict
+    contributors: list[dict] | None = None
+    forecast: dict | None = None
+    asset_id: str
+    asset_label: str | None = None
+    score: float | None = None
+    threshold: float | None = None
+    elapsed_simulated_seconds: float | None = None
+    requested_by: str | None = None
+    preview_only: bool = False
 
 
 class SimulationState:
@@ -224,6 +240,46 @@ async def pause() -> dict[str, Any]:
 async def speed(req: SpeedRequest) -> dict[str, Any]:
     state.set_speed(req.speed)
     return {"status": "ok", "speed": state.speed}
+
+
+@app.post("/work_request")
+async def post_work_request(req: WorkRequestRequest) -> dict[str, Any]:
+    """Build a CMMS-ready work request from the supplied diagnosis context.
+
+    With `preview_only=True`, returns the constructed payload without
+    submitting (used by the dashboard's preview modal). Otherwise routes
+    through the configured CMMS adapter (currently MockCmmsClient, which
+    writes JSON under reports/work_orders/).
+    """
+
+    try:
+        work_request = build_work_request(
+            diagnosis=req.diagnosis or {},
+            contributors=req.contributors or [],
+            forecast=req.forecast,
+            asset_id=req.asset_id,
+            asset_label=req.asset_label or req.asset_id,
+            score=req.score,
+            threshold=req.threshold,
+            elapsed_simulated_seconds=req.elapsed_simulated_seconds,
+            requested_by=req.requested_by or "EdgeSense Edge Device",
+        )
+    except Exception as exc:
+        LOG.exception("Failed to build work request")
+        return {"status": "error", "detail": str(exc)}
+
+    payload = work_request.to_dict()
+    if req.preview_only:
+        return {"status": "preview", "request": payload}
+
+    try:
+        client = MockCmmsClient(WORK_ORDER_DIR)
+        result = client.submit(work_request)
+    except Exception as exc:
+        LOG.exception("CMMS submission failed")
+        return {"status": "error", "detail": str(exc), "request": payload}
+
+    return {"status": "submitted", **result.to_dict()}
 
 
 @app.get("/status")

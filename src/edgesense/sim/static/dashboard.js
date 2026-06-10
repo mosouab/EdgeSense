@@ -331,6 +331,16 @@ const App = {
       contributors: [],
       forecast: null,
       diagnosis: null,
+
+      // work-request modal
+      workRequest: {
+        open: false,
+        stage: "preview", // "preview" | "submitting" | "submitted" | "error"
+        loading: false,
+        preview: null,    // built WorkRequest payload
+        submitted: null,  // { request, cmms_ref, submitted_at, storage_path, ... }
+        error: "",
+      },
     });
 
     const ws = ref(null);
@@ -517,6 +527,80 @@ const App = {
       }
     }
 
+    /* ── work-request modal ────────────────────────────── */
+
+    function workRequestPayload(previewOnly) {
+      return {
+        diagnosis: state.diagnosis || {},
+        contributors: state.contributors || [],
+        forecast: state.forecast,
+        asset_id: state.activeSource,
+        asset_label: sourceSpec.value?.display_name || state.activeSource,
+        score: state.score,
+        threshold: state.threshold,
+        elapsed_simulated_seconds: state.elapsedSeconds,
+        preview_only: previewOnly,
+      };
+    }
+
+    async function openWorkRequest() {
+      state.workRequest.open = true;
+      state.workRequest.stage = "preview";
+      state.workRequest.loading = true;
+      state.workRequest.preview = null;
+      state.workRequest.submitted = null;
+      state.workRequest.error = "";
+      try {
+        const res = await jsonRequest("/work_request", {
+          method: "POST",
+          body: workRequestPayload(true),
+        });
+        if (res.status === "preview") {
+          state.workRequest.preview = res.request;
+        } else {
+          state.workRequest.stage = "error";
+          state.workRequest.error = res.detail || "Failed to build preview.";
+        }
+      } catch (e) {
+        state.workRequest.stage = "error";
+        state.workRequest.error = String(e);
+      } finally {
+        state.workRequest.loading = false;
+      }
+    }
+
+    async function submitWorkRequest() {
+      state.workRequest.stage = "submitting";
+      state.workRequest.loading = true;
+      try {
+        const res = await jsonRequest("/work_request", {
+          method: "POST",
+          body: workRequestPayload(false),
+        });
+        if (res.status === "submitted") {
+          state.workRequest.submitted = res;
+          state.workRequest.stage = "submitted";
+        } else {
+          state.workRequest.stage = "error";
+          state.workRequest.error = res.detail || "Submission failed.";
+        }
+      } catch (e) {
+        state.workRequest.stage = "error";
+        state.workRequest.error = String(e);
+      } finally {
+        state.workRequest.loading = false;
+      }
+    }
+
+    function closeWorkRequest() {
+      state.workRequest.open = false;
+    }
+
+    const canRaiseWorkRequest = computed(() => {
+      const u = state.diagnosis?.urgency;
+      return u && u !== "info" && u !== "low";
+    });
+
     /* ── source-change side effects ───────────────────── */
 
     watch(
@@ -609,6 +693,7 @@ const App = {
       isRunning,
       canStart,
       canJump,
+      canRaiseWorkRequest,
       normalizedAlert,
       alertMessage,
       forecastDisplay,
@@ -619,6 +704,9 @@ const App = {
       togglePause,
       applySpeed,
       jumpTo,
+      openWorkRequest,
+      submitWorkRequest,
+      closeWorkRequest,
       // formatters
       formatSimTime,
     };
@@ -739,6 +827,12 @@ const App = {
           {{ (state.diagnosis && state.diagnosis.recommended_action) || 'Start a simulation to begin monitoring.' }}
         </div>
         <div v-if="state.diagnosis && state.diagnosis.matched_rule" class="action-rule">Rule: {{ state.diagnosis.matched_rule }}</div>
+        <button v-if="canRaiseWorkRequest"
+                class="btn btn--primary action-cta"
+                @click="openWorkRequest"
+                title="Build a CMMS work request from this diagnosis">
+          File work request ↗
+        </button>
       </aside>
     </section>
 
@@ -901,6 +995,98 @@ const App = {
 
       </div>
     </main>
+
+    <!-- WORK-REQUEST MODAL -->
+    <div v-if="state.workRequest.open" class="modal-backdrop" @click.self="closeWorkRequest">
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <div>
+            <div class="modal-eyebrow">CMMS Work Request</div>
+            <h3 class="modal-title">
+              <template v-if="state.workRequest.stage === 'submitted'">Work request submitted</template>
+              <template v-else-if="state.workRequest.stage === 'submitting'">Submitting…</template>
+              <template v-else-if="state.workRequest.stage === 'error'">Submission failed</template>
+              <template v-else>Review work request</template>
+            </h3>
+          </div>
+          <button class="modal-close" @click="closeWorkRequest" aria-label="Close">×</button>
+        </header>
+
+        <div class="modal-body">
+          <!-- LOADING -->
+          <div v-if="state.workRequest.loading && !state.workRequest.preview && !state.workRequest.submitted"
+               class="modal-empty">building preview…</div>
+
+          <!-- ERROR -->
+          <div v-else-if="state.workRequest.stage === 'error'" class="modal-error">
+            <div class="modal-error-title">
+              <span class="led led--alert led--pulse"></span>
+              Could not submit
+            </div>
+            <pre class="modal-pre">{{ state.workRequest.error }}</pre>
+          </div>
+
+          <!-- SUBMITTED -->
+          <div v-else-if="state.workRequest.stage === 'submitted' && state.workRequest.submitted" class="modal-success">
+            <div class="modal-success-row">
+              <span class="led led--ok"></span>
+              <span>Filed via <code>{{ state.workRequest.submitted.request.metadata?.edgesense_source ? 'MockCmmsClient' : 'CMMS' }}</code>.</span>
+            </div>
+            <dl class="modal-kv">
+              <div><dt>CMMS reference</dt><dd>{{ state.workRequest.submitted.cmms_ref }}</dd></div>
+              <div><dt>Submitted at</dt><dd>{{ state.workRequest.submitted.submitted_at }}</dd></div>
+              <div v-if="state.workRequest.submitted.storage_path"><dt>Persisted to</dt><dd>{{ state.workRequest.submitted.storage_path }}</dd></div>
+            </dl>
+            <details class="modal-details">
+              <summary>Show submitted payload</summary>
+              <pre class="modal-pre">{{ JSON.stringify(state.workRequest.submitted.request, null, 2) }}</pre>
+            </details>
+          </div>
+
+          <!-- PREVIEW -->
+          <template v-else-if="state.workRequest.preview">
+            <div class="wr-summary">
+              <span class="urgency-pill" :data-urgency="state.workRequest.preview.urgency">
+                P{{ state.workRequest.preview.priority }} · {{ state.workRequest.preview.urgency.toUpperCase() }}
+              </span>
+              <h4 class="wr-title">{{ state.workRequest.preview.title }}</h4>
+              <div class="wr-asset">
+                {{ state.workRequest.preview.asset_label }}
+                <span class="attribution-tag">{{ state.workRequest.preview.asset_id }}</span>
+              </div>
+            </div>
+
+            <dl class="modal-kv">
+              <div><dt>Work type</dt><dd>{{ state.workRequest.preview.work_type }}</dd></div>
+              <div><dt>Category</dt><dd>{{ state.workRequest.preview.category }}</dd></div>
+              <div><dt>Requested by</dt><dd>{{ state.workRequest.preview.requested_by }}</dd></div>
+              <div><dt>Reference</dt><dd>{{ state.workRequest.preview.external_id }}</dd></div>
+              <div v-if="state.workRequest.preview.failure_mode"><dt>Failure mode</dt><dd>{{ state.workRequest.preview.failure_mode }}</dd></div>
+            </dl>
+
+            <div class="wr-section-label">Description</div>
+            <pre class="modal-pre">{{ state.workRequest.preview.description }}</pre>
+
+            <details class="modal-details">
+              <summary>Show metadata + contributors</summary>
+              <pre class="modal-pre">{{ JSON.stringify(state.workRequest.preview.metadata, null, 2) }}</pre>
+            </details>
+          </template>
+        </div>
+
+        <footer class="modal-foot">
+          <button class="btn" @click="closeWorkRequest">
+            {{ state.workRequest.stage === 'submitted' ? 'Close' : 'Cancel' }}
+          </button>
+          <button v-if="state.workRequest.stage === 'preview' && state.workRequest.preview"
+                  class="btn btn--primary"
+                  :disabled="state.workRequest.loading"
+                  @click="submitWorkRequest">
+            File work request
+          </button>
+        </footer>
+      </div>
+    </div>
 
   </div>
   `,

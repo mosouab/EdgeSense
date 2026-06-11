@@ -27,6 +27,11 @@ from ..training import EarlyStoppingConfig, TrainingConfig, seed_all, split_trai
 from .bus import EventBus
 from .source import DataSource, SensorEvent
 
+# Minimum number of sliding windows the calibration buffer must yield before
+# we attempt to train. A 90/10 train/val split needs enough on each side for
+# early stopping to be meaningful.
+_MIN_CALIBRATION_WINDOWS = 40
+
 
 @dataclass
 class DeviceConfig:
@@ -97,7 +102,8 @@ class EdgeDevice:
         # Cached diagnostic ticket so non-scored events can still publish one.
         self._last_diagnosis: dict[str, Any] | None = None
         self._phase = DevicePhase(name="awaiting", progress=0.0)
-        self._window_count = 0
+        # Samples seen since the last scored window (sample-based sources).
+        self._stride_counter = 0
         self._training_task: asyncio.Task | None = None
         # Sticky alert state with hysteresis: only flip after N consecutive
         # windows agree, with separate trigger and release thresholds.
@@ -105,10 +111,33 @@ class EdgeDevice:
         self._above_streak: int = 0
         self._below_streak: int = 0
         self._warn_streak: int = 0
+        # For cycle sources with discrete assets (CMAPSS units): the asset id
+        # currently being streamed. When it changes during inference we reset
+        # the cycle buffer so windows never blend two different engines.
+        self._current_unit_id: Any = None
 
     @property
     def phase(self) -> DevicePhase:
         return self._phase
+
+    async def await_training(self, timeout: float = 30.0) -> None:
+        """Block until any in-flight training executor finishes.
+
+        The torch training runs in a thread-pool executor that cannot be
+        cancelled mid-flight; awaiting it here lets a caller (e.g. stop())
+        guarantee a clean teardown before a new simulation starts, so two
+        trainings never run concurrently.
+        """
+
+        task = self._training_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception:
+            pass
 
     async def run(self, source_stream) -> None:
         """Consume the source stream end-to-end."""
@@ -133,11 +162,12 @@ class EdgeDevice:
                 self._forecast_buffer = []
                 self._last_forecast = None
                 self._last_diagnosis = None
-                self._window_count = 0
+                self._stride_counter = 0
                 self._alert_state = "ok"
                 self._above_streak = 0
                 self._below_streak = 0
                 self._warn_streak = 0
+                self._current_unit_id = None
                 await self._broadcast_phase(
                     self._phase.name,
                     self._phase.progress,
@@ -179,19 +209,27 @@ class EdgeDevice:
             await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="calibrating")
             if len(self._buffer) >= calibration_target and self._training_task is None:
                 await self._broadcast_phase("training", 0.0, "fitting scaler + USAD model")
+                # Snapshot the calibration buffer so the executor thread trains
+                # on a stable copy while the event loop keeps appending.
+                buffer_snapshot = list(self._buffer)
                 self._training_task = asyncio.create_task(
-                    self._train_async(feature_names, window_length, stride)
+                    self._train_async(buffer_snapshot, feature_names, window_length, stride)
                 )
 
         elif phase_name == "training":
             await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
 
         elif phase_name == "inferring":
-            if len(self._buffer) - self._window_count * stride >= window_length:
+            # Keep the buffer bounded — only the last `window_length` samples
+            # are ever needed to score the current window.
+            if len(self._buffer) > window_length:
+                del self._buffer[:-window_length]
+            self._stride_counter += 1
+            if len(self._buffer) >= window_length and self._stride_counter >= stride:
+                self._stride_counter = 0
                 score, smoothed, contributors = await self._score_window(
                     feature_names, window_length
                 )
-                self._window_count += 1
                 health = float(
                     health_score(
                         np.asarray([smoothed], dtype=np.float32),
@@ -228,7 +266,11 @@ class EdgeDevice:
                     if last_smoothed is not None and self._threshold is not None
                     else 100.0
                 )
-                alert_level = self._alert_level(last_smoothed, self._threshold)
+                # No new window was scored this tick, so DON'T advance the
+                # hysteresis state machine — just echo the sticky state.
+                # Advancing here would let `stride` repeated samples satisfy
+                # the "N consecutive windows" trigger from a single window.
+                alert_level = self._alert_state
                 extras: dict[str, Any] = {}
                 if self._last_forecast:
                     extras["forecast"] = self._last_forecast
@@ -254,6 +296,26 @@ class EdgeDevice:
             raise ValueError(
                 "Cycle-based source emitted an event without cycle_features."
             )
+
+        # During inference, a change of asset id (e.g. CMAPSS test engine #1 ->
+        # #2) means the buffered tail belongs to a different machine. Clear the
+        # window buffer and per-asset state so we never score a window that
+        # blends two engines, and so the trend forecast restarts per asset.
+        # During calibration we deliberately accumulate all train units.
+        unit_id = event.metadata.get("unit_id")
+        if (
+            self._phase.name == "inferring"
+            and unit_id is not None
+            and unit_id != self._current_unit_id
+        ):
+            self._cycle_buffer.clear()
+            self._rolling_scores = []
+            self._rolling_contributions = []
+            self._forecast_buffer = []
+            self._last_forecast = None
+        if unit_id is not None:
+            self._current_unit_id = unit_id
+
         self._cycle_buffer.append(event.cycle_features)
         count = len(self._cycle_buffer)
         phase_name = self._phase.name
@@ -278,6 +340,10 @@ class EdgeDevice:
             await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
 
         elif phase_name == "inferring":
+            # Keep the cycle buffer bounded — at most `window_length` cycles
+            # are needed to assemble the current window.
+            if len(self._cycle_buffer) > window_length:
+                del self._cycle_buffer[:-window_length]
             window = self._extract_cycle_window(self._cycle_buffer, window_length)
             if window is None or self._scaler is None or self._model is None:
                 await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="inferring")
@@ -310,13 +376,24 @@ class EdgeDevice:
                 },
             )
 
-    async def _train_async(self, feature_names: list[str], window_length: int, stride: int) -> None:
+    async def _train_async(
+        self,
+        buffer_snapshot: list[dict[str, float]],
+        feature_names: list[str],
+        window_length: int,
+        stride: int,
+    ) -> None:
         if self._pause_event is not None:
             self._pause_event.set()
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
-                None, self._train_blocking, list(feature_names), window_length, stride
+                None,
+                self._train_blocking,
+                buffer_snapshot,
+                list(feature_names),
+                window_length,
+                stride,
             )
         except Exception as exc:
             if self._pause_event is not None:
@@ -329,19 +406,35 @@ class EdgeDevice:
             "inferring", 1.0, f"threshold = {self._threshold:.3f}"
         )
 
-    def _train_blocking(self, feature_names: list[str], window_length: int, stride: int) -> None:
-        """Heavy lifting: fit scaler, build windows, train USAD, set threshold."""
+    def _train_blocking(
+        self,
+        buffer_snapshot: list[dict[str, float]],
+        feature_names: list[str],
+        window_length: int,
+        stride: int,
+    ) -> None:
+        """Heavy lifting: fit scaler, build windows, train USAD, set threshold.
 
-        df = np.asarray([[row[name] for name in feature_names] for row in self._buffer], dtype=np.float32)
-        # Interpolate-then-fillna is unnecessary here because the source never emits NaN.
+        Operates on a snapshot of the calibration buffer (not self._buffer)
+        so the live event loop can keep appending without racing this thread.
+        """
+
+        df = np.asarray(
+            [[row[name] for name in feature_names] for row in buffer_snapshot],
+            dtype=np.float32,
+        )
         scaler = StandardScaler().fit(df)
         scaled = scaler.transform(df).astype(np.float32)
 
         # Sliding windows over the calibration buffer.
         num_windows = max(0, (len(scaled) - window_length) // stride + 1)
-        if num_windows < 32:
-            # Not enough data; bail to a tiny fallback (rare in practice).
-            num_windows = max(num_windows, 1)
+        if num_windows < _MIN_CALIBRATION_WINDOWS:
+            raise ValueError(
+                f"Not enough calibration data: {len(scaled)} samples produced "
+                f"{num_windows} windows of length {window_length} at stride "
+                f"{stride}; need at least {_MIN_CALIBRATION_WINDOWS}. Increase "
+                f"the calibration sample count."
+            )
         windows = np.stack(
             [scaled[i * stride : i * stride + window_length] for i in range(num_windows)],
             axis=0,
@@ -392,9 +485,9 @@ class EdgeDevice:
         # Per-channel baseline contribution for attribution.
         self._baseline_contributions = self._build_baseline_contributions(windows)
         self._rolling_contributions = []
-        # Reset window counter so inference scoring picks up from current buffer head.
-        # We've already consumed the calibration windows; new windows start AFTER buffer head.
-        self._window_count = (len(self._buffer) - window_length) // stride + 1
+        # Start the inference stride counter fresh; the first new window scores
+        # once `stride` more samples arrive.
+        self._stride_counter = 0
 
     async def _score_window(
         self, feature_names: list[str], window_length: int
@@ -424,10 +517,14 @@ class EdgeDevice:
         return score, smoothed, contributors
 
     def _alert_level(self, smoothed: float | None, threshold: float | None) -> str:
-        """Hysteretic alert state machine.
+        """Advance the hysteretic alert state machine by ONE scored window.
 
-        - Each call updates above/below streak counters based on `smoothed`
-          vs `threshold` and a release fraction.
+        MUTATES streak counters and `self._alert_state`. Call exactly once
+        per newly-scored window — never on the unscored in-between sample
+        events, or `stride` repeated samples would satisfy the
+        "N consecutive windows" trigger from a single window. The unscored
+        branch should read `self._alert_state` directly instead.
+
         - 'alert' fires once `cfg.alert_trigger_streak` consecutive windows
           exceed `threshold`, and clears only after `alert_release_streak`
           consecutive windows fall below `threshold * release_fraction`.
@@ -744,10 +841,12 @@ class EdgeDevice:
             ).astype(np.float32)
         else:
             num_windows = scaled_flat.shape[0] - window_length + 1
-            if num_windows < 32:
+            if num_windows < _MIN_CALIBRATION_WINDOWS:
                 raise ValueError(
                     f"Not enough calibration cycles for window_length={window_length}"
-                    f" (got {scaled_flat.shape[0]} cycle-rows total)."
+                    f" (got {scaled_flat.shape[0]} cycle-rows -> {num_windows} "
+                    f"windows; need at least {_MIN_CALIBRATION_WINDOWS}). "
+                    f"Increase the calibration cycle count."
                 )
             windows = np.stack(
                 [scaled_flat[i : i + window_length] for i in range(num_windows)],
@@ -817,7 +916,7 @@ class EdgeDevice:
         self._rolling_scores = list(smoothed[-50:])
         self._baseline_contributions = self._build_baseline_contributions(windows)
         self._rolling_contributions = []
-        self._window_count = 0
+        self._stride_counter = 0
 
     def _extract_cycle_window(
         self, cycle_buffer: list[np.ndarray], window_length: int

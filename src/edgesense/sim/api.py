@@ -85,6 +85,7 @@ class SimulationState:
         self.task = asyncio.create_task(self._run(source))
 
     async def stop(self) -> None:
+        device = self.device
         if self.task is not None and not self.task.done():
             self.stop_event.set()
             try:
@@ -93,6 +94,11 @@ class SimulationState:
                 self.task.cancel()
             except Exception:
                 pass
+        # Cancelling the run task does not reach the training executor thread.
+        # Wait for it explicitly so a subsequent start() can't run two torch
+        # trainings concurrently (a real stutter risk on a laptop CPU).
+        if device is not None:
+            await device.await_training()
         self.task = None
         self.device = None
         self.source = None

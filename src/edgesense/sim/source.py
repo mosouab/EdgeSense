@@ -578,6 +578,11 @@ class CMAPSSSource(DataSource):
     """
 
     SECONDS_PER_CYCLE = 30
+    # Only cycles with RUL above this floor count as a healthy calibration
+    # baseline. RUL is clipped at MAX_RUL = 125, so the flat early-life
+    # plateau sits at 125; 100 keeps that plateau plus a little margin while
+    # excluding the degradation tail.
+    HEALTHY_RUL_FLOOR = 100.0
 
     def __init__(
         self,
@@ -693,16 +698,20 @@ class CMAPSSSource(DataSource):
         train_unit_ids = sorted(self._dataset.train_units.keys())
         rng.shuffle(train_unit_ids)
 
-        # Include FULL run-to-failure trajectories so the RUL head sees varied
-        # targets (RUL ranges from MAX_RUL down toward 0). USAD will still
-        # mostly see healthy windows because the early cycles of each unit
-        # dominate, but the RUL head needs the late cycles to learn decay.
+        # Calibration must learn what HEALTHY looks like, so we only feed the
+        # early-life cycles of each train unit (RUL > HEALTHY_RUL_FLOOR). The
+        # supervised RUL head that once needed the late "decay" cycles was
+        # removed from the sim (commit 9747bb2); feeding near-failure cycles
+        # now would teach the USAD model that degradation is "normal", which
+        # both desensitises detection and contradicts the product pitch.
         sequence: list[dict] = []
         for unit_id in train_unit_ids:
             unit_df = self._dataset.train_units[unit_id]
             for _, row in unit_df.iterrows():
                 if len(sequence) >= requested:
                     break
+                if float(row["rul"]) <= self.HEALTHY_RUL_FLOOR:
+                    continue  # skip near-failure cycles — not a healthy baseline
                 sequence.append({
                     "unit_id": int(unit_id),
                     "cycle": int(row["cycle"]),

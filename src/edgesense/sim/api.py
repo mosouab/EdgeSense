@@ -306,6 +306,19 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
     """
 
     source = state.current_source or "unknown"
+
+    released_id = None
+    collected = None
+    pattern = None
+    if req.verdict == "false_positive" and state.device is not None:
+        # Finalize the episode FIRST (asset-time ended_at), then snapshot it so
+        # the persisted record's two ends share one time domain.
+        released_id = state.device.force_release()
+        # Layer 2: collect this episode's windows as operator-confirmed healthy.
+        collected = state.device.collect_dismissed_windows(state.device.get_episode(req.episode_id))
+        # Layer 3: store its latent centroid for instant, retrain-free suppression.
+        pattern = state.device.register_dismissed_pattern(state.device.get_episode(req.episode_id))
+
     episode = state.device.get_episode(req.episode_id) if state.device is not None else None
 
     try:
@@ -324,17 +337,6 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
     except Exception as exc:
         LOG.exception("Failed to persist feedback")
         return {"status": "error", "detail": str(exc)}
-
-    released_id = None
-    collected = None
-    pattern = None
-    if req.verdict == "false_positive" and state.device is not None:
-        released_id = state.device.force_release()
-        final_episode = state.device.get_episode(req.episode_id)
-        # Layer 2: collect this episode's windows as operator-confirmed healthy.
-        collected = state.device.collect_dismissed_windows(final_episode)
-        # Layer 3: store its latent centroid for instant, retrain-free suppression.
-        pattern = state.device.register_dismissed_pattern(final_episode)
 
     await state.bus.publish(
         "ui.event",

@@ -451,12 +451,16 @@ const App = {
       }
       if (ev.kind === "recalibrated") {
         if (ev.adaptation) state.adaptation = ev.adaptation;
-        showToast(`Recalibrated on ${ev.n_extra} dismissed windows — threshold ${Number(ev.threshold).toFixed(3)}`, "ok");
+        let msg = `Recalibrated on ${ev.n_extra} dismissed windows — threshold ${Number(ev.threshold).toFixed(3)}`;
+        if (ev.patterns_cleared) msg += `; cleared ${ev.patterns_cleared} latent pattern${ev.patterns_cleared === 1 ? "" : "s"} (absorbed into the model)`;
+        showToast(msg, "ok");
         return;
       }
       if (ev.kind === "reverted") {
         if (ev.adaptation) state.adaptation = ev.adaptation;
-        showToast("Reverted to the previous model", "warn");
+        let msg = "Reverted to the previous model";
+        if (ev.patterns_cleared) msg += `; cleared ${ev.patterns_cleared} latent pattern${ev.patterns_cleared === 1 ? "" : "s"} (different latent space)`;
+        showToast(msg, "warn");
         return;
       }
       if (ev.kind === "pattern_forgotten") {

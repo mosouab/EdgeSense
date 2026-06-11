@@ -670,6 +670,7 @@ class EdgeDevice:
                     "started_at": ts,
                     "started_index": int(event.index),
                     "last_index": int(event.index),
+                    "last_at": ts,
                     "peak_score": smoothed,
                     "peak_index": int(event.index),
                     "peak_contributors": contributors,
@@ -681,6 +682,7 @@ class EdgeDevice:
             else:
                 ep = self._episode
                 ep["last_index"] = int(event.index)
+                ep["last_at"] = ts
                 if smoothed is not None and (ep["peak_score"] is None or smoothed > ep["peak_score"]):
                     ep["peak_score"] = smoothed
                     ep["peak_index"] = int(event.index)
@@ -726,8 +728,12 @@ class EdgeDevice:
         self._below_streak = 0
         self._warn_streak = 0
         if self._episode is not None:
+            # Use the last event's asset timestamp (same time domain as
+            # started_at), not wall-clock UTC — otherwise an episode's two ends
+            # live in different eras (e.g. 2020 stream time vs 2026 wall clock).
+            ended_at = self._episode.get("last_at", self._episode.get("started_at", ""))
             self._finalize_episode(
-                datetime.now(timezone.utc).isoformat(),
+                ended_at,
                 int(self._episode.get("last_index", self._episode.get("started_index", 0))),
                 released_by="operator",
             )
@@ -889,12 +895,19 @@ class EdgeDevice:
         self._baseline_contributions = self._build_baseline_contributions(windows)
         self._rolling_scores = list(smoothed[-50:])
         self._rolling_contributions = []
+        # Swapping the encoder invalidates every Layer-3 centroid: they were
+        # computed in the OLD latent space, so distances to new-encoder latents
+        # are meaningless. Drop them — Layer 2 has absorbed the dismissed
+        # regimes into the model itself, making the latent shortcuts redundant.
+        patterns_cleared = len(self._dismissed_patterns)
+        self._dismissed_patterns = []
         snap_id = self._snapshot("recalibrated", tuple(feedback_ids))
         return {
             "snapshot_id": snap_id,
             "threshold": threshold,
             "n_calibration": int(len(base)),
             "n_extra": int(len(extras)),
+            "patterns_cleared": patterns_cleared,
         }
 
     def revert(self) -> dict[str, Any]:
@@ -915,7 +928,17 @@ class EdgeDevice:
         self._threshold = prev["threshold"]
         self._healthy_reference = prev["healthy_reference"]
         self._baseline_contributions = prev["baseline_contributions"]
-        return {"status": "reverted", "snapshot_id": prev["id"], "threshold": self._threshold}
+        # The reverted-to encoder defines a different latent space, so any
+        # Layer-3 centroids registered against the current encoder are now
+        # invalid. Clear them rather than match across latent spaces.
+        patterns_cleared = len(self._dismissed_patterns)
+        self._dismissed_patterns = []
+        return {
+            "status": "reverted",
+            "snapshot_id": prev["id"],
+            "threshold": self._threshold,
+            "patterns_cleared": patterns_cleared,
+        }
 
     # ---------- Layer-3 false-positive latent memory ----------
 

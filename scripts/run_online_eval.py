@@ -22,10 +22,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 import urllib.request
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import websockets
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from edgesense.datasets.metropt import load_metropt_failures  # noqa: E402
+
+SAMPLE_SECONDS = 10.0  # Metro.PT sampling cadence
 from sklearn.metrics import (
     confusion_matrix,
     f1_score,
@@ -52,7 +60,7 @@ async def drive(source: str, speed: float, calibration: int, timeout: float = 24
     """Run one source to completion; return the list of inference readings."""
 
     readings: list[dict] = []
-    async with websockets.connect(BASE.replace("http", "ws") + "/ws", max_size=None) as ws:
+    async with websockets.connect(BASE.replace("http", "ws") + "/ws", max_size=None, ping_interval=None, max_queue=None) as ws:
         post("/start", {"source": source, "speed": speed, "calibration_samples": calibration})
         loop = asyncio.get_event_loop()
         t0 = loop.time()
@@ -77,6 +85,89 @@ async def drive(source: str, speed: float, calibration: int, timeout: float = 24
     return readings
 
 
+async def drive_metropt(
+    speed: float, calibration: int, healthy_margin_h: float = 12.0
+) -> list[dict]:
+    """Metro.PT: calibrate, then stream the live model THROUGH each labelled
+    failure region via jumps (streaming all 5 months online is impractical).
+
+    Each segment runs from ~`healthy_margin_h` hours before the failure start
+    to ~`healthy_margin_h` hours after the failure end, so every segment has
+    both classes. Readings carry a timestamp we later label against the
+    failure intervals.
+    """
+
+    failures = load_metropt_failures().sort_values("start_time").reset_index(drop=True)
+    margin = int(round(healthy_margin_h * 3600 / SAMPLE_SECONDS))
+
+    readings: list[dict] = []
+    async with websockets.connect(BASE.replace("http", "ws") + "/ws", max_size=None, ping_interval=None, max_queue=None) as ws:
+        post("/start", {"source": "metropt", "speed": speed, "calibration_samples": calibration})
+        loop = asyncio.get_event_loop()
+
+        # 1) wait for inference to begin (calibration + training).
+        t0 = loop.time()
+        while loop.time() - t0 < 240:
+            msg = await asyncio.wait_for(ws.recv(), timeout=30)
+            ev = json.loads(msg)
+            if ev.get("kind") == "phase" and ev.get("phase") == "inferring":
+                break
+            if ev.get("kind") == "phase" and ev.get("phase") == "failed":
+                post("/stop")
+                return []
+
+        markers = {m["id"]: m for m in json.loads(
+            urllib.request.urlopen(f"{BASE}/failures?source=metropt").read())["failures"]}
+
+        # 2) for each failure, jump to margin-before-start and collect through
+        #    margin-after-end, discarding the first few warm-up windows.
+        for _, frow in failures.iterrows():
+            fid = int(frow["failure_id"])
+            marker = markers.get(fid)
+            if marker is None:
+                continue
+            start_idx = int(marker["start_index"])
+            end_ts = pd.to_datetime(frow["end_time"])
+            stop_after_ts = end_ts + pd.Timedelta(hours=healthy_margin_h)
+            jump_idx = max(0, start_idx - margin)
+
+            post("/jump", {"index": jump_idx})
+            warmup = 6           # drop the first few windows (buffer/smoothing refilling)
+            seen = 0
+            seg_t0 = loop.time()
+            while loop.time() - seg_t0 < 120:  # per-segment safety cap
+                try:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=8)
+                except asyncio.TimeoutError:
+                    break
+                ev = json.loads(msg)
+                if ev.get("kind") != "reading" or ev.get("phase") != "inferring":
+                    continue
+                if ev.get("score") is None:
+                    continue
+                seen += 1
+                if seen <= warmup:
+                    continue
+                ts = pd.to_datetime(ev["timestamp"])
+                readings.append(ev)
+                if ts >= stop_after_ts:
+                    break
+        post("/stop")
+    return readings
+
+
+def label_by_failures(readings: list[dict]) -> np.ndarray:
+    failures = load_metropt_failures()
+    starts = pd.to_datetime(failures["start_time"]).to_numpy()
+    ends = pd.to_datetime(failures["end_time"]).to_numpy()
+    labels = np.zeros(len(readings), dtype=int)
+    for i, r in enumerate(readings):
+        ts = pd.to_datetime(r["timestamp"]).to_datetime64()
+        if np.any((starts <= ts) & (ts <= ends)):
+            labels[i] = 1
+    return labels
+
+
 def binary_metrics(labels: np.ndarray, preds: np.ndarray) -> dict:
     return {
         "precision": float(precision_score(labels, preds, zero_division=0)),
@@ -94,13 +185,22 @@ def main() -> None:
     args = ap.parse_args()
 
     print(f"Driving live sim: source={args.source} speed={args.speed} calibration={args.calibration}")
-    readings = asyncio.run(drive(args.source, args.speed, args.calibration))
-    if not readings:
-        print("No labelled inference readings collected — is the server running and does "
-              "this source stream `true_anomaly`? (Hydraulic does; Metro.PT/CMAPSS don't.)")
-        return
+    if args.source == "metropt":
+        readings = asyncio.run(drive_metropt(args.speed, args.calibration))
+        if not readings:
+            print("No readings collected (training may have failed / server not running).")
+            return
+        labels = label_by_failures(readings)
+        print("(Metro.PT: labelled by timestamp vs the 6 failure intervals; the live model "
+              "is streamed through each labelled region rather than all 5 months.)")
+    else:
+        readings = asyncio.run(drive(args.source, args.speed, args.calibration))
+        if not readings:
+            print("No labelled inference readings collected — does this source stream "
+                  "`true_anomaly`? (Hydraulic does; CMAPSS doesn't.)")
+            return
+        labels = np.array([int(r["true_anomaly"]) for r in readings], dtype=int)
 
-    labels = np.array([int(r["true_anomaly"]) for r in readings], dtype=int)
     scores = np.array([float(r["score"]) for r in readings], dtype=float)
     thr = float(readings[-1]["threshold"])  # device's calibration p99 threshold
 

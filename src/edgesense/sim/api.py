@@ -326,8 +326,12 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
         return {"status": "error", "detail": str(exc)}
 
     released_id = None
+    collected = None
     if req.verdict == "false_positive" and state.device is not None:
         released_id = state.device.force_release()
+        # Layer 2: collect this episode's windows as operator-confirmed healthy.
+        final_episode = state.device.get_episode(req.episode_id)
+        collected = state.device.collect_dismissed_windows(final_episode)
 
     await state.bus.publish(
         "ui.event",
@@ -337,9 +341,48 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
             "episode_id": req.episode_id,
             "verdict": req.verdict,
             "released_episode_id": released_id,
+            "collected": collected,
+            "adaptation": state.device.adaptation_state() if state.device is not None else None,
         },
     )
-    return {"status": "recorded", **record.to_dict()}
+    return {"status": "recorded", "collected": collected, **record.to_dict()}
+
+
+@app.post("/recalibrate")
+async def post_recalibrate() -> dict[str, Any]:
+    """Retrain the model on calibration + operator-dismissed windows (Layer 2)."""
+
+    if state.device is None:
+        return {"status": "error", "detail": "no running simulation"}
+    result = await state.device.recalibrate()
+    if result.get("status") == "recalibrated":
+        await state.bus.publish(
+            "ui.event",
+            {"kind": "recalibrated", **result, "adaptation": state.device.adaptation_state()},
+        )
+    return result
+
+
+@app.post("/revert")
+async def post_revert() -> dict[str, Any]:
+    """Restore the previous model + threshold snapshot (Layer 2)."""
+
+    if state.device is None:
+        return {"status": "error", "detail": "no running simulation"}
+    result = state.device.revert()
+    if result.get("status") == "reverted":
+        await state.bus.publish(
+            "ui.event",
+            {"kind": "reverted", **result, "adaptation": state.device.adaptation_state()},
+        )
+    return result
+
+
+@app.get("/adaptation")
+async def get_adaptation() -> dict[str, Any]:
+    if state.device is None:
+        return {"adaptation": None}
+    return {"adaptation": state.device.adaptation_state()}
 
 
 @app.get("/feedback")

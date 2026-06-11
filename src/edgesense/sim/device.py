@@ -12,8 +12,12 @@ on; it just consumes the spec from the source.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +38,9 @@ from .source import DataSource, SensorEvent
 # early stopping to be meaningful.
 _MIN_CALIBRATION_WINDOWS = 40
 
+# Where Layer-2 retrain snapshots are written for the audit trail.
+_SNAPSHOT_DIR = Path("reports/feedback/snapshots")
+
 
 @dataclass
 class DeviceConfig:
@@ -51,6 +58,12 @@ class DeviceConfig:
     adv_ramp_epochs: int = 15
     adv_max_weight: float = 0.3
     seed: int = 42
+    # Layer-2 adaptation: how many recent scored windows to keep for episode
+    # capture, and the cap on operator-injected "healthy" windows as a
+    # fraction of the calibration window count (guard: an operator must not be
+    # able to teach a real degradation away by dismissing it repeatedly).
+    recent_window_capacity: int = 800
+    extra_healthy_cap_fraction: float = 0.2
     # Alert hysteresis: how many consecutive windows must agree before the
     # alert state flips, and the release threshold (fraction of the trigger).
     alert_trigger_streak: int = 4
@@ -122,6 +135,14 @@ class EdgeDevice:
         # `_last_episode` briefly so feedback can reference them after release.
         self._episode: dict[str, Any] | None = None
         self._last_episode: dict[str, Any] | None = None
+        # Layer-2 adaptation state.
+        self._calibration_windows: np.ndarray | None = None   # scaled training windows
+        self._recent_windows: deque[tuple[int, np.ndarray]] = deque(
+            maxlen=cfg.recent_window_capacity
+        )                                                       # (reading_index, scaled window)
+        self._last_scaled_window: np.ndarray | None = None
+        self._extra_healthy: list[np.ndarray] = []             # operator-dismissed windows
+        self._snapshot_stack: list[dict[str, Any]] = []        # model/threshold versions
 
     @property
     def phase(self) -> DevicePhase:
@@ -177,6 +198,8 @@ class EdgeDevice:
                 self._current_unit_id = None
                 self._episode = None
                 self._last_episode = None
+                self._recent_windows.clear()
+                self._last_scaled_window = None
                 await self._broadcast_phase(
                     self._phase.name,
                     self._phase.progress,
@@ -239,6 +262,8 @@ class EdgeDevice:
                 score, smoothed, contributors = await self._score_window(
                     feature_names, window_length
                 )
+                if self._last_scaled_window is not None:
+                    self._recent_windows.append((int(event.index), self._last_scaled_window))
                 health = float(
                     health_score(
                         np.asarray([smoothed], dtype=np.float32),
@@ -328,6 +353,7 @@ class EdgeDevice:
             self._rolling_contributions = []
             self._forecast_buffer = []
             self._last_forecast = None
+            self._recent_windows.clear()
         if unit_id is not None:
             self._current_unit_id = unit_id
 
@@ -364,6 +390,8 @@ class EdgeDevice:
                 await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="inferring")
                 return
             score, smoothed, contributors = await self._score_cycle_window(window, feature_names)
+            if self._last_scaled_window is not None:
+                self._recent_windows.append((int(event.index), self._last_scaled_window))
             health = float(
                 health_score(
                     np.asarray([smoothed], dtype=np.float32),
@@ -500,6 +528,10 @@ class EdgeDevice:
         # Per-channel baseline contribution for attribution.
         self._baseline_contributions = self._build_baseline_contributions(windows)
         self._rolling_contributions = []
+        # Retain the scaled calibration windows so a Layer-2 recalibration can
+        # retrain on them plus operator-dismissed windows. Snapshot v0.
+        self._calibration_windows = windows
+        self._snapshot("initial")
         # Start the inference stride counter fresh; the first new window scores
         # once `stride` more samples arrive.
         self._stride_counter = 0
@@ -513,6 +545,7 @@ class EdgeDevice:
         window_rows = self._buffer[start:]
         raw = np.asarray([[row[name] for name in feature_names] for row in window_rows], dtype=np.float32)
         scaled = self._scaler.transform(raw).astype(np.float32)
+        self._last_scaled_window = scaled
         window = scaled[np.newaxis, ...]
         scoring_cfg = ScoringConfig(
             alpha=self.cfg.scoring_alpha, beta=self.cfg.scoring_beta, batch_size=1
@@ -611,6 +644,7 @@ class EdgeDevice:
                     "source": self.source.spec.name,
                     "started_at": ts,
                     "started_index": int(event.index),
+                    "last_index": int(event.index),
                     "peak_score": smoothed,
                     "peak_index": int(event.index),
                     "peak_contributors": contributors,
@@ -621,6 +655,7 @@ class EdgeDevice:
                 }
             else:
                 ep = self._episode
+                ep["last_index"] = int(event.index)
                 if smoothed is not None and (ep["peak_score"] is None or smoothed > ep["peak_score"]):
                     ep["peak_score"] = smoothed
                     ep["peak_index"] = int(event.index)
@@ -666,14 +701,195 @@ class EdgeDevice:
         self._below_streak = 0
         self._warn_streak = 0
         if self._episode is not None:
-            from datetime import datetime, timezone
-
             self._finalize_episode(
                 datetime.now(timezone.utc).isoformat(),
-                int(self._episode.get("peak_index", 0)),
+                int(self._episode.get("last_index", self._episode.get("started_index", 0))),
                 released_by="operator",
             )
         return closed_id
+
+    # ---------- Layer-2 adaptation ----------
+
+    def collect_dismissed_windows(self, episode: dict[str, Any] | None) -> dict[str, Any]:
+        """Add a dismissed episode's scaled windows to the extra-healthy pool.
+
+        Capped at `extra_healthy_cap_fraction` of the calibration window count
+        so an operator can't teach a real degradation away by dismissing it.
+        """
+
+        if self._calibration_windows is None:
+            return {"added": 0, "total_extra": len(self._extra_healthy), "capped": False}
+        cap = max(1, int(self.cfg.extra_healthy_cap_fraction * len(self._calibration_windows)))
+        room = max(0, cap - len(self._extra_healthy))
+        if episode is None or room == 0:
+            return {
+                "added": 0,
+                "total_extra": len(self._extra_healthy),
+                "cap": cap,
+                "capped": room == 0,
+            }
+        a = episode.get("started_index")
+        b = episode.get("last_index", episode.get("peak_index", a))
+        if a is None:
+            return {"added": 0, "total_extra": len(self._extra_healthy), "cap": cap, "capped": False}
+        windows = [w for (idx, w) in self._recent_windows if a <= idx <= b]
+        take = windows[:room]
+        self._extra_healthy.extend(take)
+        return {
+            "added": len(take),
+            "available": len(windows),
+            "total_extra": len(self._extra_healthy),
+            "cap": cap,
+            "capped": len(windows) > room,
+        }
+
+    def adaptation_state(self) -> dict[str, Any]:
+        return {
+            "calibration_windows": int(len(self._calibration_windows)) if self._calibration_windows is not None else 0,
+            "extra_healthy": len(self._extra_healthy),
+            "extra_cap": max(1, int(self.cfg.extra_healthy_cap_fraction * len(self._calibration_windows))) if self._calibration_windows is not None else 0,
+            "snapshots": [s["id"] for s in self._snapshot_stack],
+            "current_snapshot": self._snapshot_stack[-1]["id"] if self._snapshot_stack else None,
+            "threshold": self._threshold,
+        }
+
+    def _snapshot(self, label: str, feedback_ids: tuple[str, ...] = ()) -> str:
+        """Version the current model + threshold (in-memory stack + disk audit)."""
+
+        if self._model is None or self._threshold is None:
+            return ""
+        cfg = self._model.config
+        snap = {
+            "id": "SNAP-" + uuid4().hex[:8],
+            "label": label,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "threshold": float(self._threshold),
+            "model_state": {k: v.detach().cpu().clone() for k, v in self._model.state_dict().items()},
+            "model_config": {
+                "in_features": cfg.in_features,
+                "base_channels": cfg.base_channels,
+                "latent_channels": cfg.latent_channels,
+                "downsample_layers": cfg.downsample_layers,
+            },
+            "healthy_reference": None if self._healthy_reference is None else self._healthy_reference.copy(),
+            "baseline_contributions": None if self._baseline_contributions is None else self._baseline_contributions.copy(),
+            "n_extra": len(self._extra_healthy),
+            "feedback_ids": list(feedback_ids),
+        }
+        self._snapshot_stack.append(snap)
+        try:
+            d = _SNAPSHOT_DIR / snap["id"]
+            d.mkdir(parents=True, exist_ok=True)
+            torch.save({"model_state": snap["model_state"], "model_config": snap["model_config"]}, d / "model.pt")
+            (d / "meta.json").write_text(json.dumps({
+                "id": snap["id"], "label": label, "created_at": snap["created_at"],
+                "threshold": snap["threshold"], "n_extra": snap["n_extra"],
+                "feedback_ids": snap["feedback_ids"], "source": self.source.spec.name,
+            }, indent=2))
+        except Exception:
+            pass  # disk audit is best-effort; in-memory stack is authoritative
+        return snap["id"]
+
+    async def recalibrate(self, feedback_ids: tuple[str, ...] = ()) -> dict[str, Any]:
+        """Retrain on the calibration windows + operator-dismissed windows.
+
+        Pauses the source, retrains the USAD encoder in the executor, refits the
+        p99 threshold, snapshots the new version, then resumes inference.
+        """
+
+        if self._calibration_windows is None:
+            return {"status": "error", "detail": "no calibration windows retained yet"}
+        if not self._extra_healthy:
+            return {"status": "error", "detail": "no dismissed windows to learn from"}
+        if self._pause_event is not None:
+            self._pause_event.set()
+        await self._broadcast_phase(
+            "recalibrating", 0.0,
+            f"retraining with {len(self._extra_healthy)} operator-dismissed windows",
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            meta = await loop.run_in_executor(None, self._retrain_blocking, list(feedback_ids))
+        except Exception as exc:
+            if self._pause_event is not None:
+                self._pause_event.clear()
+            await self._broadcast_phase("failed", 0.0, f"recalibration error: {exc}")
+            return {"status": "error", "detail": str(exc)}
+        if self._pause_event is not None:
+            self._pause_event.clear()
+        await self._broadcast_phase(
+            "inferring", 1.0, f"recalibrated — threshold = {self._threshold:.3f}"
+        )
+        return {"status": "recalibrated", **meta}
+
+    def _retrain_blocking(self, feedback_ids: list[str]) -> dict[str, Any]:
+        base = self._calibration_windows
+        extras = np.stack(self._extra_healthy, axis=0).astype(np.float32)
+        windows = np.concatenate([base, extras], axis=0)
+
+        seed_all(self.cfg.seed)
+        cfg_model = USADConv1dConfig(
+            in_features=windows.shape[2],
+            base_channels=self.cfg.base_channels,
+            latent_channels=self.cfg.latent_channels,
+            downsample_layers=self.cfg.downsample_layers,
+        )
+        model = USADConv1d(cfg_model)
+        train_only, val_only = split_train_validation(windows, val_fraction=0.1)
+        train_cfg = TrainingConfig(
+            batch_size=min(self.cfg.batch_size, max(8, train_only.shape[0] // 4)),
+            epochs=self.cfg.max_epochs,
+            learning_rate=self.cfg.learning_rate,
+            adv_ramp_epochs=self.cfg.adv_ramp_epochs,
+            adv_max_weight=self.cfg.adv_max_weight,
+            grad_clip_norm=1.0,
+            seed=self.cfg.seed,
+        )
+        stop_cfg = EarlyStoppingConfig(patience=6, min_delta=1e-4, max_epochs=self.cfg.max_epochs, val_fraction=0.1)
+        train_usad(model, train_only, train_cfg, val_windows=val_only, early_stopping=stop_cfg, show_progress=False)
+
+        scoring_cfg = ScoringConfig(alpha=self.cfg.scoring_alpha, beta=self.cfg.scoring_beta, batch_size=256)
+        cal_scores = compute_usad_scores(model, windows, scoring_cfg, show_progress=False)
+        kernel = self.cfg.median_smoothing_window
+        if kernel >= 3 and kernel % 2 == 1 and cal_scores.size:
+            smoothed = apply_median_filter(cal_scores, kernel).astype(np.float32)
+        else:
+            smoothed = cal_scores
+        threshold = float(np.percentile(smoothed, self.cfg.healthy_quantile))
+
+        self._model = model
+        self._threshold = threshold
+        self._healthy_reference = smoothed
+        self._baseline_contributions = self._build_baseline_contributions(windows)
+        self._rolling_scores = list(smoothed[-50:])
+        self._rolling_contributions = []
+        snap_id = self._snapshot("recalibrated", tuple(feedback_ids))
+        return {
+            "snapshot_id": snap_id,
+            "threshold": threshold,
+            "n_calibration": int(len(base)),
+            "n_extra": int(len(extras)),
+        }
+
+    def revert(self) -> dict[str, Any]:
+        """Restore the previous model + threshold snapshot."""
+
+        if len(self._snapshot_stack) < 2:
+            return {"status": "error", "detail": "nothing to revert to (only the initial model)"}
+        self._snapshot_stack.pop()  # drop current
+        prev = self._snapshot_stack[-1]
+        mc = prev["model_config"]
+        model = USADConv1d(USADConv1dConfig(
+            in_features=mc["in_features"], base_channels=mc["base_channels"],
+            latent_channels=mc["latent_channels"], downsample_layers=mc["downsample_layers"],
+        ))
+        model.load_state_dict(prev["model_state"])
+        model.eval()
+        self._model = model
+        self._threshold = prev["threshold"]
+        self._healthy_reference = prev["healthy_reference"]
+        self._baseline_contributions = prev["baseline_contributions"]
+        return {"status": "reverted", "snapshot_id": prev["id"], "threshold": self._threshold}
 
     def _compute_feature_contributions(self, window_scaled: np.ndarray) -> np.ndarray:
         """Per-feature anomaly contribution for one (T, F) window.
@@ -1019,6 +1235,8 @@ class EdgeDevice:
         self._rolling_scores = list(smoothed[-50:])
         self._baseline_contributions = self._build_baseline_contributions(windows)
         self._rolling_contributions = []
+        self._calibration_windows = windows
+        self._snapshot("initial")
         self._stride_counter = 0
 
     def _extract_cycle_window(
@@ -1049,6 +1267,7 @@ class EdgeDevice:
         self, window_raw: np.ndarray, feature_names: list[str]
     ) -> tuple[float, float, list[dict[str, float | str]]]:
         scaled = self._scaler.transform(window_raw).astype(np.float32)
+        self._last_scaled_window = scaled
         window = scaled[np.newaxis, ...]
         scoring_cfg = ScoringConfig(
             alpha=self.cfg.scoring_alpha, beta=self.cfg.scoring_beta, batch_size=1

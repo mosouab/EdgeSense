@@ -15,11 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..cmms import MockCmmsClient, build_work_request
+from ..feedback import FeedbackStore, build_feedback_record
 from .bus import EventBus
 from .device import DeviceConfig, EdgeDevice
 from .source import DataSource, get_source, list_available_sources
 
 WORK_ORDER_DIR = Path("reports/work_orders")
+FEEDBACK_DIR = Path("reports/feedback")
 
 LOG = logging.getLogger("edgesense.sim")
 
@@ -39,6 +41,12 @@ class SpeedRequest(BaseModel):
 class JumpRequest(BaseModel):
     failure_id: int | None = None
     index: int | None = None
+
+
+class FeedbackRequest(BaseModel):
+    episode_id: str
+    verdict: str               # "false_positive" | "confirmed"
+    note: str | None = None
 
 
 class WorkRequestRequest(BaseModel):
@@ -286,6 +294,57 @@ async def post_work_request(req: WorkRequestRequest) -> dict[str, Any]:
         return {"status": "error", "detail": str(exc), "request": payload}
 
     return {"status": "submitted", **result.to_dict()}
+
+
+@app.post("/feedback")
+async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
+    """Record an operator verdict on an alert episode.
+
+    Snapshots the episode authoritatively from the running device, persists an
+    append-only JSONL record, dismisses the alert on a false positive
+    (force_release), and broadcasts a 'feedback' event so the UI can react.
+    """
+
+    source = state.current_source or "unknown"
+    episode = state.device.get_episode(req.episode_id) if state.device is not None else None
+
+    try:
+        record = build_feedback_record(
+            episode_id=req.episode_id,
+            source=source,
+            verdict=req.verdict,
+            note=req.note or "",
+            episode=episode,
+        )
+    except ValueError as exc:
+        return {"status": "error", "detail": str(exc)}
+
+    try:
+        FeedbackStore(FEEDBACK_DIR).append(record)
+    except Exception as exc:
+        LOG.exception("Failed to persist feedback")
+        return {"status": "error", "detail": str(exc)}
+
+    released_id = None
+    if req.verdict == "false_positive" and state.device is not None:
+        released_id = state.device.force_release()
+
+    await state.bus.publish(
+        "ui.event",
+        {
+            "kind": "feedback",
+            "feedback_id": record.feedback_id,
+            "episode_id": req.episode_id,
+            "verdict": req.verdict,
+            "released_episode_id": released_id,
+        },
+    )
+    return {"status": "recorded", **record.to_dict()}
+
+
+@app.get("/feedback")
+async def get_feedback(source: str | None = None) -> dict[str, Any]:
+    return {"feedback": FeedbackStore(FEEDBACK_DIR).list(source)}
 
 
 @app.get("/status")

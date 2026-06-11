@@ -38,6 +38,7 @@ const api = {
   setSpeed: (speed) => jsonRequest("/speed", { method: "POST", body: { speed } }),
   jump: (failureId) =>
     jsonRequest("/jump", { method: "POST", body: { failure_id: failureId } }),
+  feedback: (body) => jsonRequest("/feedback", { method: "POST", body }),
 };
 
 /* ─────────────────────────────────────────────────────────
@@ -228,6 +229,15 @@ const App = {
       contributors: [],
       forecast: null,
       diagnosis: null,
+      currentEpisodeId: null,
+
+      // operator feedback
+      feedback: {
+        pending: null,   // null | "confirmed" | "false_positive"
+        note: "",
+        toast: "",
+        toastKind: "ok",
+      },
 
       // work-request modal
       workRequest: {
@@ -302,6 +312,9 @@ const App = {
       state.threshold = null;
       state.health = null;
       state.alertLevel = "ok";
+      state.currentEpisodeId = null;
+      state.feedback.pending = null;
+      state.feedback.note = "";
       // Clear the chart canvases immediately.
       sensorCharts.forEach((c) => {
         if (!c) return;
@@ -345,6 +358,7 @@ const App = {
         if (Array.isArray(ev.contributors)) state.contributors = ev.contributors;
         if (ev.forecast !== undefined) state.forecast = ev.forecast;
         if (ev.diagnosis !== undefined) state.diagnosis = ev.diagnosis;
+        state.currentEpisodeId = typeof ev.episode_id === "string" ? ev.episode_id : null;
         // latest sensor cell numbers
         const latest = {};
         primaryChannels.value.forEach((ch) => {
@@ -412,6 +426,12 @@ const App = {
         state.phase = ev.phase || "idle";
         state.phaseDetail = ev.detail || "";
         state.progress = typeof ev.progress === "number" ? ev.progress : state.progress;
+        return;
+      }
+      if (ev.kind === "feedback") {
+        const fp = ev.verdict === "false_positive";
+        showToast(fp ? "Recorded — alert dismissed" : "Recorded — fault confirmed", fp ? "ok" : "warn");
+        if (fp) state.currentEpisodeId = null;
         return;
       }
       if (ev.kind !== "reading") return;
@@ -579,6 +599,48 @@ const App = {
       return u && u !== "info" && u !== "low";
     });
 
+    /* ── operator feedback ─────────────────────────────── */
+
+    let toastTimer = null;
+    function showToast(text, kind = "ok") {
+      state.feedback.toast = text;
+      state.feedback.toastKind = kind;
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => (state.feedback.toast = ""), 3500);
+    }
+
+    function askFeedback(verdict) {
+      state.feedback.pending = verdict;
+      state.feedback.note = "";
+    }
+
+    function cancelFeedback() {
+      state.feedback.pending = null;
+      state.feedback.note = "";
+    }
+
+    async function sendFeedback() {
+      const episodeId = state.currentEpisodeId;
+      const verdict = state.feedback.pending;
+      if (!episodeId || !verdict) {
+        cancelFeedback();
+        return;
+      }
+      const note = state.feedback.note;
+      cancelFeedback();
+      try {
+        const res = await api.feedback({ episode_id: episodeId, verdict, note });
+        if (res.status !== "recorded") {
+          showToast(res.detail || "Feedback failed", "warn");
+        }
+        // success toast is driven by the broadcast 'feedback' event so every
+        // connected console sees it; no extra toast here.
+      } catch (e) {
+        console.error("feedback", e);
+        showToast("Feedback request failed", "warn");
+      }
+    }
+
     /* ── source-change side effects ───────────────────── */
 
     watch(
@@ -695,6 +757,9 @@ const App = {
       openWorkRequest,
       submitWorkRequest,
       closeWorkRequest,
+      askFeedback,
+      cancelFeedback,
+      sendFeedback,
       // formatters
       formatSimTime,
     };
@@ -815,14 +880,38 @@ const App = {
           {{ (state.diagnosis && state.diagnosis.recommended_action) || 'Start a simulation to begin monitoring.' }}
         </div>
         <div v-if="state.diagnosis && state.diagnosis.matched_rule" class="action-rule">Rule: {{ state.diagnosis.matched_rule }}</div>
-        <button v-if="canRaiseWorkRequest"
-                class="btn btn--primary action-cta"
-                @click="openWorkRequest"
-                title="Build a CMMS work request from this diagnosis">
-          File work request ↗
-        </button>
+        <div class="action-buttons">
+          <button v-if="canRaiseWorkRequest"
+                  class="btn btn--primary action-cta"
+                  @click="openWorkRequest"
+                  title="Build a CMMS work request from this diagnosis">
+            File work request ↗
+          </button>
+          <template v-if="state.currentEpisodeId">
+            <button class="btn action-cta" @click="askFeedback('confirmed')"
+                    title="Confirm this is a real fault">✓ Confirm fault</button>
+            <button class="btn action-cta" @click="askFeedback('false_positive')"
+                    title="Mark as a false alarm and dismiss">✕ False positive</button>
+          </template>
+        </div>
+        <div v-if="state.feedback.pending" class="feedback-confirm">
+          <span class="feedback-confirm-label">
+            {{ state.feedback.pending === 'confirmed' ? 'Confirm fault' : 'Dismiss as false positive' }} — optional note:
+          </span>
+          <input class="feedback-note" v-model="state.feedback.note"
+                 placeholder="e.g. idle regime, known sensor drift…"
+                 @keyup.enter="sendFeedback" />
+          <div class="feedback-confirm-actions">
+            <button class="btn action-cta" @click="cancelFeedback">Cancel</button>
+            <button class="btn btn--primary action-cta" @click="sendFeedback">Send</button>
+          </div>
+        </div>
       </aside>
     </section>
+
+    <div v-if="state.feedback.toast" class="feedback-toast" :data-kind="state.feedback.toastKind">
+      {{ state.feedback.toast }}
+    </div>
 
     <!-- WORKSPACE -->
     <main class="workspace">

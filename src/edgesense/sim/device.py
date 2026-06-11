@@ -15,6 +15,7 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import torch
@@ -116,6 +117,11 @@ class EdgeDevice:
         # currently being streamed. When it changes during inference we reset
         # the cycle buffer so windows never blend two different engines.
         self._current_unit_id: Any = None
+        # Alert-episode accumulator: a dict while an episode is active (score
+        # elevated to warn/alert), else None. Finished episodes linger in
+        # `_last_episode` briefly so feedback can reference them after release.
+        self._episode: dict[str, Any] | None = None
+        self._last_episode: dict[str, Any] | None = None
 
     @property
     def phase(self) -> DevicePhase:
@@ -169,6 +175,8 @@ class EdgeDevice:
                 self._below_streak = 0
                 self._warn_streak = 0
                 self._current_unit_id = None
+                self._episode = None
+                self._last_episode = None
                 await self._broadcast_phase(
                     self._phase.name,
                     self._phase.progress,
@@ -242,6 +250,9 @@ class EdgeDevice:
                 forecast = self._update_forecast(event, smoothed)
                 diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
                 self._last_diagnosis = diagnosis
+                episode_id = self._update_episode(
+                    event, alert_level, smoothed, contributors, diagnosis, forecast
+                )
                 await self._publish_reading(
                     event,
                     score=smoothed,
@@ -252,6 +263,7 @@ class EdgeDevice:
                         "contributors": contributors,
                         "forecast": forecast,
                         "diagnosis": diagnosis,
+                        "episode_id": episode_id,
                     },
                 )
             else:
@@ -277,6 +289,8 @@ class EdgeDevice:
                     extras["forecast"] = self._last_forecast
                 if self._last_diagnosis:
                     extras["diagnosis"] = self._last_diagnosis
+                if self._episode is not None:
+                    extras["episode_id"] = self._episode.get("episode_id")
                 await self._publish_reading(
                     event,
                     score=last_smoothed,
@@ -361,6 +375,9 @@ class EdgeDevice:
             forecast = self._update_forecast(event, smoothed)
             diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
             self._last_diagnosis = diagnosis
+            episode_id = self._update_episode(
+                event, alert_level, smoothed, contributors, diagnosis, forecast
+            )
             await self._publish_reading(
                 event,
                 score=smoothed,
@@ -374,6 +391,7 @@ class EdgeDevice:
                     "contributors": contributors,
                     "forecast": forecast,
                     "diagnosis": diagnosis,
+                    "episode_id": episode_id,
                 },
             )
 
@@ -564,6 +582,98 @@ class EdgeDevice:
             elif self._warn_streak >= max(2, self.cfg.alert_trigger_streak // 2):
                 self._alert_state = "warn"
         return self._alert_state
+
+    # ---------- Alert episodes (feedback Layer 1) ----------
+
+    def _update_episode(
+        self,
+        event: SensorEvent,
+        level: str,
+        smoothed: float | None,
+        contributors: list[dict[str, float | str]],
+        diagnosis: dict[str, Any] | None,
+        forecast: dict[str, Any] | None,
+    ) -> str | None:
+        """Maintain the alert-episode accumulator. Returns the active episode id.
+
+        An episode spans a contiguous elevated run (warn or alert). It records
+        the peak score and the contributors / diagnosis / forecast at that peak,
+        so feedback can snapshot the worst moment authoritatively.
+        """
+
+        elevated = level in ("warn", "alert")
+        ts = event.timestamp.isoformat() if hasattr(event.timestamp, "isoformat") else str(event.timestamp)
+
+        if elevated:
+            if self._episode is None:
+                self._episode = {
+                    "episode_id": "EP-" + uuid4().hex[:10],
+                    "source": self.source.spec.name,
+                    "started_at": ts,
+                    "started_index": int(event.index),
+                    "peak_score": smoothed,
+                    "peak_index": int(event.index),
+                    "peak_contributors": contributors,
+                    "diagnosis": diagnosis,
+                    "forecast": forecast,
+                    "threshold": self._threshold,
+                    "max_level": level,
+                }
+            else:
+                ep = self._episode
+                if smoothed is not None and (ep["peak_score"] is None or smoothed > ep["peak_score"]):
+                    ep["peak_score"] = smoothed
+                    ep["peak_index"] = int(event.index)
+                    ep["peak_contributors"] = contributors
+                    ep["diagnosis"] = diagnosis
+                    ep["forecast"] = forecast
+                if level == "alert":
+                    ep["max_level"] = "alert"
+            return self._episode["episode_id"]
+
+        # Back to OK — close any open episode.
+        if self._episode is not None:
+            self._finalize_episode(ts, int(event.index))
+        return None
+
+    def _finalize_episode(self, ended_at: str, ended_index: int, released_by: str = "auto") -> None:
+        if self._episode is None:
+            return
+        self._episode["ended_at"] = ended_at
+        self._episode["ended_index"] = ended_index
+        self._episode["released_by"] = released_by
+        self._last_episode = self._episode
+        self._episode = None
+
+    def get_episode(self, episode_id: str) -> dict[str, Any] | None:
+        """Return the active or most-recently-finished episode by id."""
+
+        if self._episode is not None and self._episode.get("episode_id") == episode_id:
+            return dict(self._episode)
+        if self._last_episode is not None and self._last_episode.get("episode_id") == episode_id:
+            return dict(self._last_episode)
+        return None
+
+    def force_release(self) -> str | None:
+        """Operator-driven alert dismissal: reset the state machine immediately.
+
+        Returns the id of the episode that was closed, if any.
+        """
+
+        closed_id = self._episode.get("episode_id") if self._episode else None
+        self._alert_state = "ok"
+        self._above_streak = 0
+        self._below_streak = 0
+        self._warn_streak = 0
+        if self._episode is not None:
+            from datetime import datetime, timezone
+
+            self._finalize_episode(
+                datetime.now(timezone.utc).isoformat(),
+                int(self._episode.get("peak_index", 0)),
+                released_by="operator",
+            )
+        return closed_id
 
     def _compute_feature_contributions(self, window_scaled: np.ndarray) -> np.ndarray:
         """Per-feature anomaly contribution for one (T, F) window.

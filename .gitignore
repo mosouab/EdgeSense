@@ -14,3 +14,6 @@ data/cmapss/
 claude.md
 AGENT_HANDOFF.md
 reports/work_orders/
+
+# Operator feedback log (runtime artefact)
+reports/feedback/

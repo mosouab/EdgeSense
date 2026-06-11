@@ -64,6 +64,12 @@ class DeviceConfig:
     # able to teach a real degradation away by dismissing it repeatedly).
     recent_window_capacity: int = 800
     extra_healthy_cap_fraction: float = 0.2
+    # Layer-3 latent memory: a dismissed episode's match radius in latent space
+    # is mean + k*std of its windows' distance to the centroid. A latent match
+    # only suppresses a window whose score is within `suppress_score_cap_mult`
+    # of the threshold — strong anomalies are never hidden by the FP memory.
+    latent_radius_k: float = 1.5
+    suppress_score_cap_mult: float = 2.5
     # Alert hysteresis: how many consecutive windows must agree before the
     # alert state flips, and the release threshold (fraction of the trigger).
     alert_trigger_streak: int = 4
@@ -143,6 +149,8 @@ class EdgeDevice:
         self._last_scaled_window: np.ndarray | None = None
         self._extra_healthy: list[np.ndarray] = []             # operator-dismissed windows
         self._snapshot_stack: list[dict[str, Any]] = []        # model/threshold versions
+        # Layer-3 false-positive latent memory: dismissed-episode centroids.
+        self._dismissed_patterns: list[dict[str, Any]] = []
 
     @property
     def phase(self) -> DevicePhase:
@@ -271,9 +279,10 @@ class EdgeDevice:
                         self._threshold,
                     )[0]
                 )
-                alert_level = self._alert_level(smoothed, self._threshold)
+                matched = self._maybe_match(smoothed)
+                alert_level = self._alert_level(smoothed, self._threshold, suppress=(matched is not None))
                 forecast = self._update_forecast(event, smoothed)
-                diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
+                diagnosis = self._build_diagnosis(alert_level, forecast, contributors, suppressed=matched)
                 self._last_diagnosis = diagnosis
                 episode_id = self._update_episode(
                     event, alert_level, smoothed, contributors, diagnosis, forecast
@@ -289,6 +298,7 @@ class EdgeDevice:
                         "forecast": forecast,
                         "diagnosis": diagnosis,
                         "episode_id": episode_id,
+                        "suppressed": matched["id"] if matched else None,
                     },
                 )
             else:
@@ -399,9 +409,10 @@ class EdgeDevice:
                     self._threshold,
                 )[0]
             )
-            alert_level = self._alert_level(smoothed, self._threshold)
+            matched = self._maybe_match(smoothed)
+            alert_level = self._alert_level(smoothed, self._threshold, suppress=(matched is not None))
             forecast = self._update_forecast(event, smoothed)
-            diagnosis = self._build_diagnosis(alert_level, forecast, contributors)
+            diagnosis = self._build_diagnosis(alert_level, forecast, contributors, suppressed=matched)
             self._last_diagnosis = diagnosis
             episode_id = self._update_episode(
                 event, alert_level, smoothed, contributors, diagnosis, forecast
@@ -420,6 +431,7 @@ class EdgeDevice:
                     "forecast": forecast,
                     "diagnosis": diagnosis,
                     "episode_id": episode_id,
+                    "suppressed": matched["id"] if matched else None,
                 },
             )
 
@@ -564,7 +576,7 @@ class EdgeDevice:
         smoothed = float(np.median(recent)) if recent else score
         return score, smoothed, contributors
 
-    def _alert_level(self, smoothed: float | None, threshold: float | None) -> str:
+    def _alert_level(self, smoothed: float | None, threshold: float | None, suppress: bool = False) -> str:
         """Advance the hysteretic alert state machine by ONE scored window.
 
         MUTATES streak counters and `self._alert_state`. Call exactly once
@@ -586,6 +598,19 @@ class EdgeDevice:
             self._below_streak = 0
             self._warn_streak = 0
             return "ok"
+
+        if suppress:
+            # The current window matches an operator-dismissed pattern (Layer 3).
+            # Treat it as benign for the state machine and step the alert down
+            # one level per window so a known false-alarm regime decays quickly.
+            self._above_streak = 0
+            self._warn_streak = 0
+            self._below_streak += 1
+            if self._alert_state == "alert":
+                self._alert_state = "warn"
+            elif self._alert_state == "warn":
+                self._alert_state = "ok"
+            return self._alert_state
 
         release_level = threshold * self.cfg.alert_release_fraction
         if smoothed >= threshold:
@@ -751,6 +776,7 @@ class EdgeDevice:
             "snapshots": [s["id"] for s in self._snapshot_stack],
             "current_snapshot": self._snapshot_stack[-1]["id"] if self._snapshot_stack else None,
             "threshold": self._threshold,
+            "patterns": self.list_patterns(),
         }
 
     def _snapshot(self, label: str, feedback_ids: tuple[str, ...] = ()) -> str:
@@ -890,6 +916,89 @@ class EdgeDevice:
         self._healthy_reference = prev["healthy_reference"]
         self._baseline_contributions = prev["baseline_contributions"]
         return {"status": "reverted", "snapshot_id": prev["id"], "threshold": self._threshold}
+
+    # ---------- Layer-3 false-positive latent memory ----------
+
+    def _window_latent(self, scaled_window: np.ndarray) -> np.ndarray:
+        """Encoder latent vector for one (T, F) scaled window: time-pooled (C,)."""
+
+        x = torch.tensor(scaled_window[np.newaxis, ...], dtype=torch.float32)
+        self._model.eval()
+        with torch.no_grad():
+            z = self._model.encode(x).mean(dim=2).squeeze(0).cpu().numpy()
+        return z.astype(np.float32)
+
+    def register_dismissed_pattern(self, episode: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Store the encoder-latent centroid of a dismissed episode (Layer 3).
+
+        Instant: subsequent windows whose latent lands within the pattern's
+        radius get their alert suppressed (no retraining needed).
+        """
+
+        if episode is None or self._model is None:
+            return None
+        a = episode.get("started_index")
+        b = episode.get("last_index", episode.get("peak_index", a))
+        if a is None:
+            return None
+        windows = [w for (idx, w) in self._recent_windows if a <= idx <= b]
+        if not windows:
+            return None
+        latents = np.stack([self._window_latent(w) for w in windows], axis=0)
+        centroid = latents.mean(axis=0)
+        dists = np.linalg.norm(latents - centroid, axis=1)
+        radius = float(dists.mean() + self.cfg.latent_radius_k * dists.std() + 1e-6)
+        label = None
+        diag = episode.get("diagnosis")
+        if isinstance(diag, dict):
+            label = diag.get("root_cause")
+        pattern = {
+            "id": "PAT-" + uuid4().hex[:6],
+            "centroid": centroid,
+            "radius": radius,
+            "n": len(windows),
+            "label": label or "dismissed regime",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._dismissed_patterns.append(pattern)
+        return {"id": pattern["id"], "n": pattern["n"], "radius": radius, "label": pattern["label"]}
+
+    def _maybe_match(self, smoothed: float | None) -> dict[str, Any] | None:
+        """Match the current window to a dismissed pattern, with a score guard.
+
+        Only borderline alarms (score within `suppress_score_cap_mult` of the
+        threshold) can be suppressed; a strong anomaly is never hidden by the
+        false-positive memory even if its latent is near a dismissed centroid.
+        """
+
+        if (not self._dismissed_patterns or smoothed is None or self._threshold is None
+                or smoothed >= self.cfg.suppress_score_cap_mult * self._threshold):
+            return None
+        return self._match_dismissed_pattern(self._last_scaled_window)
+
+    def _match_dismissed_pattern(self, scaled_window: np.ndarray | None) -> dict[str, Any] | None:
+        """Return the nearest dismissed pattern within radius, or None."""
+
+        if not self._dismissed_patterns or scaled_window is None or self._model is None:
+            return None
+        z = self._window_latent(scaled_window)
+        best, best_d = None, float("inf")
+        for p in self._dismissed_patterns:
+            d = float(np.linalg.norm(z - p["centroid"]))
+            if d <= p["radius"] and d < best_d:
+                best, best_d = p, d
+        return best
+
+    def forget_pattern(self, pattern_id: str) -> dict[str, Any]:
+        before = len(self._dismissed_patterns)
+        self._dismissed_patterns = [p for p in self._dismissed_patterns if p["id"] != pattern_id]
+        return {"status": "ok" if len(self._dismissed_patterns) < before else "not_found",
+                "remaining": len(self._dismissed_patterns)}
+
+    def list_patterns(self) -> list[dict[str, Any]]:
+        return [{"id": p["id"], "n": p["n"], "radius": round(p["radius"], 3),
+                 "label": p["label"], "created_at": p["created_at"]}
+                for p in self._dismissed_patterns]
 
     def _compute_feature_contributions(self, window_scaled: np.ndarray) -> np.ndarray:
         """Per-feature anomaly contribution for one (T, F) window.
@@ -1292,8 +1401,25 @@ class EdgeDevice:
         alert_level: str,
         forecast: dict[str, Any] | None,
         contributors: list[dict[str, float | str]],
+        suppressed: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Synthesise root cause + urgency + recommended action."""
+
+        # Layer-3: window matches an operator-dismissed pattern → explain the
+        # suppression instead of raising a fresh diagnosis.
+        if suppressed is not None:
+            return {
+                "urgency": "info",
+                "urgency_label": "Suppressed — matches a dismissed pattern",
+                "root_cause": f"Matches dismissed pattern {suppressed['id']} ({suppressed.get('label', 'dismissed regime')})",
+                "recommended_action": "Previously dismissed by an operator as a false alarm. No action.",
+                "evidence": [
+                    f"{c.get('label', c.get('name'))} +{float(c.get('delta_pct', 0)):.1f} pts"
+                    for c in (contributors or [])[:2]
+                ],
+                "matched_rule": "",
+                "suppressed_by": suppressed["id"],
+            }
 
         urgency, urgency_label = self._urgency_from_state(alert_level, forecast)
 

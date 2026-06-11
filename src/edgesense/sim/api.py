@@ -327,11 +327,14 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
 
     released_id = None
     collected = None
+    pattern = None
     if req.verdict == "false_positive" and state.device is not None:
         released_id = state.device.force_release()
-        # Layer 2: collect this episode's windows as operator-confirmed healthy.
         final_episode = state.device.get_episode(req.episode_id)
+        # Layer 2: collect this episode's windows as operator-confirmed healthy.
         collected = state.device.collect_dismissed_windows(final_episode)
+        # Layer 3: store its latent centroid for instant, retrain-free suppression.
+        pattern = state.device.register_dismissed_pattern(final_episode)
 
     await state.bus.publish(
         "ui.event",
@@ -342,10 +345,35 @@ async def post_feedback(req: FeedbackRequest) -> dict[str, Any]:
             "verdict": req.verdict,
             "released_episode_id": released_id,
             "collected": collected,
+            "pattern": pattern,
             "adaptation": state.device.adaptation_state() if state.device is not None else None,
         },
     )
-    return {"status": "recorded", "collected": collected, **record.to_dict()}
+    return {"status": "recorded", "collected": collected, "pattern": pattern, **record.to_dict()}
+
+
+class ForgetPatternRequest(BaseModel):
+    pattern_id: str
+
+
+@app.get("/patterns")
+async def get_patterns() -> dict[str, Any]:
+    if state.device is None:
+        return {"patterns": []}
+    return {"patterns": state.device.list_patterns()}
+
+
+@app.post("/forget_pattern")
+async def post_forget_pattern(req: ForgetPatternRequest) -> dict[str, Any]:
+    if state.device is None:
+        return {"status": "error", "detail": "no running simulation"}
+    result = state.device.forget_pattern(req.pattern_id)
+    await state.bus.publish(
+        "ui.event",
+        {"kind": "pattern_forgotten", "pattern_id": req.pattern_id,
+         "adaptation": state.device.adaptation_state()},
+    )
+    return result
 
 
 @app.post("/recalibrate")

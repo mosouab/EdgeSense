@@ -151,6 +151,9 @@ class EdgeDevice:
         self._snapshot_stack: list[dict[str, Any]] = []        # model/threshold versions
         # Layer-3 false-positive latent memory: dismissed-episode centroids.
         self._dismissed_patterns: list[dict[str, Any]] = []
+        # Warm start: when True, run() skips calibration+training and infers
+        # immediately on a model loaded via load_state().
+        self._warm = False
 
     @property
     def phase(self) -> DevicePhase:
@@ -185,9 +188,15 @@ class EdgeDevice:
         stride = spec.stride
         calibration_target = self.cfg.calibration_samples
         unit_label = "cycles" if cycle_based else "samples"
-        await self._broadcast_phase(
-            "calibrating", 0.0, f"collecting {calibration_target:,} {unit_label}"
-        )
+        if self._warm:
+            # Model already loaded — go straight to inference, no calibration.
+            await self._broadcast_phase(
+                "inferring", 1.0, f"warm start — threshold = {self._threshold:.3f}"
+            )
+        else:
+            await self._broadcast_phase(
+                "calibrating", 0.0, f"collecting {calibration_target:,} {unit_label}"
+            )
 
         async for event in source_stream:
             if event.metadata.get("jumped"):
@@ -1022,6 +1031,113 @@ class EdgeDevice:
         return [{"id": p["id"], "n": p["n"], "radius": round(p["radius"], 3),
                  "label": p["label"], "created_at": p["created_at"]}
                 for p in self._dismissed_patterns]
+
+    # ---------- Warm-start: export / load full device state ----------
+
+    def export_state(self, include_calibration_windows: bool = True) -> dict[str, Any]:
+        """Serialise the trained, possibly-adapted device into a portable dict.
+
+        Captures everything inference needs (scaler, model, threshold, healthy
+        reference, attribution baseline) plus the human-in-the-loop adaptation
+        (Layer-3 patterns, and optionally the calibration windows so Layer-2
+        recalibration still works after a warm start).
+        """
+
+        if self._model is None or self._scaler is None or self._threshold is None:
+            raise ValueError("nothing to export — the model has not been trained yet")
+        spec = self.source.spec
+        cfg = self._model.config
+        return {
+            "format_version": 1,
+            "source": spec.name,
+            "feature_names": list(spec.feature_names),
+            "window_length": spec.window_length,
+            "stride": spec.stride,
+            "cycle_based": spec.cycle_based,
+            "scaler": {
+                "mean": np.asarray(self._scaler.mean_, dtype=np.float64),
+                "scale": np.asarray(self._scaler.scale_, dtype=np.float64),
+                "var": np.asarray(self._scaler.var_, dtype=np.float64),
+                "n_features_in": int(self._scaler.n_features_in_),
+            },
+            "model_config": {
+                "in_features": cfg.in_features,
+                "base_channels": cfg.base_channels,
+                "latent_channels": cfg.latent_channels,
+                "downsample_layers": cfg.downsample_layers,
+            },
+            "model_state": {k: v.detach().cpu() for k, v in self._model.state_dict().items()},
+            "threshold": float(self._threshold),
+            "healthy_reference": None if self._healthy_reference is None else np.asarray(self._healthy_reference, dtype=np.float32),
+            "baseline_contributions": None if self._baseline_contributions is None else np.asarray(self._baseline_contributions, dtype=np.float32),
+            "dismissed_patterns": [
+                {"id": p["id"], "centroid": np.asarray(p["centroid"], dtype=np.float32),
+                 "radius": float(p["radius"]), "n": int(p["n"]),
+                 "label": p["label"], "created_at": p["created_at"]}
+                for p in self._dismissed_patterns
+            ],
+            "calibration_windows": (
+                np.asarray(self._calibration_windows, dtype=np.float32)
+                if include_calibration_windows and self._calibration_windows is not None else None
+            ),
+            "meta": {
+                "calibration_samples": self.cfg.calibration_samples,
+                "seed": self.cfg.seed,
+                "adapted": len(self._snapshot_stack) > 1,
+                "n_patterns": len(self._dismissed_patterns),
+                "has_calibration_windows": include_calibration_windows and self._calibration_windows is not None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+    def load_state(self, art: dict[str, Any]) -> None:
+        """Restore device state from an export_state() dict for a warm start."""
+
+        spec = self.source.spec
+        if art.get("source") != spec.name:
+            raise ValueError(f"artifact is for source {art.get('source')!r}, not {spec.name!r}")
+        # `spec.feature_names` is populated in place only once the source loads
+        # its dataset (lazy, at stream start), so it's usually empty here. Only
+        # hard-check when it's already populated; otherwise the source-name match
+        # is the guard and the model/scaler dims enforce feature count at scoring.
+        spec_feats = list(spec.feature_names)
+        art_feats = list(art.get("feature_names", []))
+        if spec_feats and art_feats and spec_feats != art_feats:
+            raise ValueError("artifact feature set does not match the current source")
+
+        sc = StandardScaler()
+        sc.mean_ = np.asarray(art["scaler"]["mean"], dtype=np.float64)
+        sc.scale_ = np.asarray(art["scaler"]["scale"], dtype=np.float64)
+        sc.var_ = np.asarray(art["scaler"]["var"], dtype=np.float64)
+        sc.n_features_in_ = int(art["scaler"]["n_features_in"])
+        self._scaler = sc
+
+        mc = art["model_config"]
+        model = USADConv1d(USADConv1dConfig(
+            in_features=mc["in_features"], base_channels=mc["base_channels"],
+            latent_channels=mc["latent_channels"], downsample_layers=mc["downsample_layers"],
+        ))
+        model.load_state_dict(art["model_state"])
+        model.eval()
+        self._model = model
+        self._threshold = float(art["threshold"])
+        hr = art.get("healthy_reference")
+        self._healthy_reference = None if hr is None else np.asarray(hr, dtype=np.float32)
+        bc = art.get("baseline_contributions")
+        self._baseline_contributions = None if bc is None else np.asarray(bc, dtype=np.float32)
+        self._dismissed_patterns = [
+            {"id": p["id"], "centroid": np.asarray(p["centroid"], dtype=np.float32),
+             "radius": float(p["radius"]), "n": int(p["n"]),
+             "label": p["label"], "created_at": p["created_at"]}
+            for p in art.get("dismissed_patterns", [])
+        ]
+        cw = art.get("calibration_windows")
+        self._calibration_windows = None if cw is None else np.asarray(cw, dtype=np.float32)
+        self._rolling_scores = list(self._healthy_reference[-50:]) if self._healthy_reference is not None else []
+        # Snapshot the loaded model as v0 so revert has a floor during the showcase.
+        self._snapshot_stack = []
+        self._snapshot("warm-loaded")
+        self._warm = True
 
     def _compute_feature_contributions(self, window_scaled: np.ndarray) -> np.ndarray:
         """Per-feature anomaly contribution for one (T, F) window.

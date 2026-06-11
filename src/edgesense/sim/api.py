@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..cmms import MockCmmsClient, build_work_request
 from ..feedback import FeedbackStore, build_feedback_record
+from .artifacts import list_artifacts, load_artifact, save_artifact
 from .bus import EventBus
 from .device import DeviceConfig, EdgeDevice
 from .source import DataSource, get_source, list_available_sources
@@ -32,6 +33,12 @@ class StartRequest(BaseModel):
     source: str = "metropt"
     speed: float = 60.0
     calibration_samples: int = 30_000
+    warm_model: str | None = None   # if set, load this showcase model instead of training
+
+
+class SaveModelRequest(BaseModel):
+    name: str
+    include_calibration_windows: bool = True
 
 
 class SpeedRequest(BaseModel):
@@ -76,7 +83,13 @@ class SimulationState:
         self.source: DataSource | None = None
         self._seek_to: int | None = None
 
-    async def start(self, source_name: str, speed: float, calibration_samples: int) -> None:
+    async def start(
+        self,
+        source_name: str,
+        speed: float,
+        calibration_samples: int,
+        warm_model: str | None = None,
+    ) -> None:
         await self.stop()
         self.stop_event = asyncio.Event()
         self.pause_event = asyncio.Event()
@@ -88,6 +101,11 @@ class SimulationState:
         # Pass the same pause_event so the device can stop the source while
         # it trains (otherwise the source can exhaust before inference).
         self.device = EdgeDevice(self.bus, source, device_cfg, pause_event=self.pause_event)
+        if warm_model is not None:
+            # Warm start: load a pretrained, feedback-adapted model and skip
+            # calibration + training entirely.
+            art = load_artifact(source_name, warm_model)
+            self.device.load_state(art)
         self.source = source
         self._seek_to = None
         self.task = asyncio.create_task(self._run(source))
@@ -234,14 +252,44 @@ async def jump(req: JumpRequest) -> dict[str, Any]:
 
 @app.post("/start")
 async def start(req: StartRequest) -> dict[str, Any]:
-    await state.start(req.source, req.speed, req.calibration_samples)
-    return {"status": "started", "source": req.source, "speed": req.speed}
+    try:
+        await state.start(req.source, req.speed, req.calibration_samples, warm_model=req.warm_model)
+    except FileNotFoundError as exc:
+        return {"status": "error", "detail": str(exc)}
+    except ValueError as exc:
+        return {"status": "error", "detail": str(exc)}
+    return {"status": "started", "source": req.source, "speed": req.speed,
+            "warm": req.warm_model is not None, "warm_model": req.warm_model}
 
 
 @app.post("/stop")
 async def stop() -> dict[str, Any]:
     await state.stop()
     return {"status": "stopped"}
+
+
+@app.get("/models")
+async def get_models(source: str | None = None) -> dict[str, Any]:
+    return {"models": list_artifacts(source)}
+
+
+@app.post("/save_model")
+async def post_save_model(req: SaveModelRequest) -> dict[str, Any]:
+    """Persist the current trained+adapted device as a warm-start showcase model."""
+
+    if state.device is None:
+        return {"status": "error", "detail": "no running simulation"}
+    try:
+        art = state.device.export_state(include_calibration_windows=req.include_calibration_windows)
+        path = save_artifact(art, req.name)
+    except ValueError as exc:
+        return {"status": "error", "detail": str(exc)}
+    except Exception as exc:
+        LOG.exception("Failed to save model")
+        return {"status": "error", "detail": str(exc)}
+    return {"status": "saved", "name": req.name, "path": str(path),
+            "adapted": art["meta"]["adapted"], "n_patterns": art["meta"]["n_patterns"],
+            "has_calibration_windows": art["meta"]["has_calibration_windows"]}
 
 
 @app.post("/pause")

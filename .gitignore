@@ -17,3 +17,6 @@ reports/work_orders/
 
 # Operator feedback log (runtime artefact)
 reports/feedback/
+
+# Warm-start showcase models (regenerate with scripts/pretrain_showcase.py)
+models/

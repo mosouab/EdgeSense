@@ -42,6 +42,7 @@ const api = {
   recalibrate: () => jsonRequest("/recalibrate", { method: "POST" }),
   revert: () => jsonRequest("/revert", { method: "POST" }),
   forgetPattern: (patternId) => jsonRequest("/forget_pattern", { method: "POST", body: { pattern_id: patternId } }),
+  models: (source) => jsonRequest(`/models?source=${encodeURIComponent(source)}`),
 };
 
 /* ─────────────────────────────────────────────────────────
@@ -207,11 +208,13 @@ const App = {
       // catalogue
       sources: [],
       failures: [],
+      models: [],          // warm-start showcase models for the active source
 
       // form
       activeSource: "metropt",
       calibSamples: 60000,
       speed: 3000,
+      warmModel: "",       // "" = train fresh; else a saved model name
 
       // connection / lifecycle
       wsState: "connecting",
@@ -289,6 +292,7 @@ const App = {
     const isRunning = computed(() => state.phase !== "idle" && state.phase !== "finished");
     const canStart = computed(() => !isRunning.value && state.wsState === "connected");
     const canJump = computed(() => state.phase === "inferring");
+    const isWarm = computed(() => !!state.warmModel);
 
     const normalizedAlert = computed(() => normalizeAlertLevel(state.alertLevel));
     const alertMessage = computed(() => alertText(normalizedAlert.value));
@@ -515,14 +519,32 @@ const App = {
       }
     }
 
+    async function loadModels() {
+      try {
+        const data = await api.models(state.activeSource);
+        state.models = data.models || [];
+        // Drop the selection if it no longer exists for this source.
+        if (state.warmModel && !state.models.some((m) => m.name === state.warmModel)) {
+          state.warmModel = "";
+        }
+      } catch (e) {
+        console.error("loadModels", e);
+        state.models = [];
+      }
+    }
+
     async function start() {
       resetStreams();
       try {
-        await api.start({
+        const res = await api.start({
           source: state.activeSource,
           speed: Number(state.speed),
           calibration_samples: Number(state.calibSamples),
+          warm_model: state.warmModel || null,
         });
+        if (res && res.status === "error") {
+          showToast(res.detail || "Start failed", "warn");
+        }
       } catch (e) {
         console.error("start", e);
       }
@@ -719,7 +741,9 @@ const App = {
       (name) => {
         const spec = state.sources.find((s) => s.name === name);
         if (spec) state.calibSamples = spec.suggested_calibration ?? state.calibSamples;
+        state.warmModel = "";
         loadFailures();
+        loadModels();
         // Channel set changed → the sensor canvases are re-rendered; rebuild
         // the chart instances against the new DOM nodes on the next tick.
         resetStreams();
@@ -732,6 +756,7 @@ const App = {
     onMounted(async () => {
       await loadSources();
       await loadFailures();
+      await loadModels();
       await nextTick();
       buildCharts();
       rafHandle = requestAnimationFrame(renderLoop);
@@ -814,6 +839,7 @@ const App = {
       isRunning,
       canStart,
       canJump,
+      isWarm,
       canRaiseWorkRequest,
       normalizedAlert,
       alertMessage,
@@ -885,9 +911,18 @@ const App = {
           </option>
         </select>
       </label>
+      <label class="field" v-if="state.models.length">
+        <span class="field-label">Model</span>
+        <select v-model="state.warmModel" :disabled="isRunning">
+          <option value="">Train fresh</option>
+          <option v-for="m in state.models" :key="m.name" :value="m.name">
+            {{ m.name }} (warm{{ m.adapted ? ', adapted' : '' }}{{ m.n_patterns ? ', ' + m.n_patterns + ' patterns' : '' }})
+          </option>
+        </select>
+      </label>
       <label class="field">
         <span class="field-label">Calibration {{ calibrationUnit }}</span>
-        <input type="number" v-model.number="state.calibSamples" min="500" step="500" :disabled="isRunning" />
+        <input type="number" v-model.number="state.calibSamples" min="500" step="500" :disabled="isRunning || isWarm" />
       </label>
       <label class="field">
         <span class="field-label">Simulation speed</span>

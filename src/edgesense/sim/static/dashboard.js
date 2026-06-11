@@ -41,6 +41,7 @@ const api = {
   feedback: (body) => jsonRequest("/feedback", { method: "POST", body }),
   recalibrate: () => jsonRequest("/recalibrate", { method: "POST" }),
   revert: () => jsonRequest("/revert", { method: "POST" }),
+  forgetPattern: (patternId) => jsonRequest("/forget_pattern", { method: "POST", body: { pattern_id: patternId } }),
 };
 
 /* ─────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ const App = {
       forecast: null,
       diagnosis: null,
       currentEpisodeId: null,
+      suppressed: null,   // pattern id currently suppressing the alert (Layer 3)
 
       // operator feedback
       feedback: {
@@ -241,8 +243,8 @@ const App = {
         toastKind: "ok",
       },
 
-      // Layer-2 adaptation
-      adaptation: { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null },
+      // Layer-2 / Layer-3 adaptation
+      adaptation: { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null, patterns: [] },
       recalibrating: false,
 
       // work-request modal
@@ -319,9 +321,10 @@ const App = {
       state.health = null;
       state.alertLevel = "ok";
       state.currentEpisodeId = null;
+      state.suppressed = null;
       state.feedback.pending = null;
       state.feedback.note = "";
-      state.adaptation = { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null };
+      state.adaptation = { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null, patterns: [] };
       // Clear the chart canvases immediately.
       sensorCharts.forEach((c) => {
         if (!c) return;
@@ -366,6 +369,7 @@ const App = {
         if (ev.forecast !== undefined) state.forecast = ev.forecast;
         if (ev.diagnosis !== undefined) state.diagnosis = ev.diagnosis;
         state.currentEpisodeId = typeof ev.episode_id === "string" ? ev.episode_id : null;
+        state.suppressed = typeof ev.suppressed === "string" ? ev.suppressed : null;
         // latest sensor cell numbers
         const latest = {};
         primaryChannels.value.forEach((ch) => {
@@ -453,6 +457,11 @@ const App = {
       if (ev.kind === "reverted") {
         if (ev.adaptation) state.adaptation = ev.adaptation;
         showToast("Reverted to the previous model", "warn");
+        return;
+      }
+      if (ev.kind === "pattern_forgotten") {
+        if (ev.adaptation) state.adaptation = ev.adaptation;
+        showToast("Forgot dismissed pattern — it can alert again", "warn");
         return;
       }
       if (ev.kind !== "reading") return;
@@ -690,6 +699,15 @@ const App = {
       }
     }
 
+    async function forgetPattern(patternId) {
+      try {
+        await api.forgetPattern(patternId);
+      } catch (e) {
+        console.error("forgetPattern", e);
+        showToast("Forget request failed", "warn");
+      }
+    }
+
     /* ── source-change side effects ───────────────────── */
 
     watch(
@@ -813,6 +831,7 @@ const App = {
       canRevert,
       recalibrate,
       revert,
+      forgetPattern,
       // formatters
       formatSimTime,
     };
@@ -877,6 +896,13 @@ const App = {
           Learned <strong>{{ state.adaptation.extra_healthy }}</strong>/{{ state.adaptation.extra_cap }} windows
           <span class="adaptation-ver" v-if="state.adaptation.snapshots && state.adaptation.snapshots.length">v{{ state.adaptation.snapshots.length - 1 }}</span>
         </span>
+        <span class="pattern-chips" v-if="state.adaptation.patterns && state.adaptation.patterns.length">
+          <span class="pattern-chip" v-for="p in state.adaptation.patterns" :key="p.id"
+                :title="'Dismissed pattern ' + p.id + ' (' + p.n + ' windows) — ' + (p.label || '')">
+            ⊘ {{ p.id }}
+            <button class="pattern-forget" @click="forgetPattern(p.id)" title="Forget this pattern">×</button>
+          </span>
+        </span>
         <button class="btn" :disabled="!canRecalibrate" @click="recalibrate">
           {{ state.recalibrating ? 'Recalibrating…' : 'Recalibrate' }}
         </button>
@@ -931,6 +957,9 @@ const App = {
             'led--pulse': state.diagnosis?.urgency === 'critical',
           }"></span>
           {{ (state.diagnosis && state.diagnosis.urgency_label) || 'awaiting calibration' }}
+        </span>
+        <span class="suppress-badge" v-if="state.suppressed" :title="'Latent match to dismissed pattern ' + state.suppressed">
+          ⊘ Suppressed — matches dismissed pattern {{ state.suppressed }}
         </span>
         <h2 class="diagnosis-root">{{ (state.diagnosis && state.diagnosis.root_cause) || 'EdgeSense — awaiting calibration' }}</h2>
         <ul class="diagnosis-evidence" v-if="state.diagnosis && state.diagnosis.evidence && state.diagnosis.evidence.length">

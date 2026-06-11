@@ -205,6 +205,41 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 1px s
   color: var(--accent);
 }
 .adaptation-group .btn { height: 30px; padding: 0 12px; font-size: 10px; }
+.pattern-chips { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+.pattern-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--info);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--info);
+}
+.pattern-forget {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 1px;
+}
+.pattern-forget:hover { color: var(--alert); }
+
+.suppress-badge {
+  display: inline-block;
+  margin: 6px 0 2px;
+  padding: 3px 9px;
+  border: 1px solid var(--info);
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--info);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
 
 .actions {
   margin-left: auto;

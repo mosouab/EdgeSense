@@ -181,12 +181,38 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 1px s
 .field select:focus,
 .field input:focus { border-color: var(--accent); }
 
+.adaptation-group {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid var(--border);
+}
+.adaptation-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.adaptation-label strong { color: var(--text-bright); font-family: var(--mono); }
+.adaptation-ver {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-bright);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent);
+}
+.adaptation-group .btn { height: 30px; padding: 0 12px; font-size: 10px; }
+
 .actions {
   margin-left: auto;
   display: flex;
-  align-items: end;
+  align-items: center;
   gap: 8px;
 }
+.adaptation-group + .actions { margin-left: 8px; }
 .btn {
   height: 34px;
   padding: 0 16px;
@@ -251,6 +277,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 1px s
 }
 .phase-tag[data-phase="calibrating"] { color: var(--info);  border-color: var(--info); }
 .phase-tag[data-phase="training"]    { color: var(--warn);  border-color: var(--warn); }
+.phase-tag[data-phase="recalibrating"] { color: var(--warn); border-color: var(--warn); }
 .phase-tag[data-phase="inferring"]   { color: var(--ok);    border-color: var(--ok); }
 .phase-tag[data-phase="finished"]    { color: var(--text-muted); }
 .phase-tag[data-phase="failed"]      { color: var(--alert); border-color: var(--alert); }

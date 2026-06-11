@@ -39,6 +39,8 @@ const api = {
   jump: (failureId) =>
     jsonRequest("/jump", { method: "POST", body: { failure_id: failureId } }),
   feedback: (body) => jsonRequest("/feedback", { method: "POST", body }),
+  recalibrate: () => jsonRequest("/recalibrate", { method: "POST" }),
+  revert: () => jsonRequest("/revert", { method: "POST" }),
 };
 
 /* ─────────────────────────────────────────────────────────
@@ -239,6 +241,10 @@ const App = {
         toastKind: "ok",
       },
 
+      // Layer-2 adaptation
+      adaptation: { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null },
+      recalibrating: false,
+
       // work-request modal
       workRequest: {
         open: false,
@@ -315,6 +321,7 @@ const App = {
       state.currentEpisodeId = null;
       state.feedback.pending = null;
       state.feedback.note = "";
+      state.adaptation = { extra_healthy: 0, extra_cap: 0, snapshots: [], current_snapshot: null };
       // Clear the chart canvases immediately.
       sensorCharts.forEach((c) => {
         if (!c) return;
@@ -430,8 +437,22 @@ const App = {
       }
       if (ev.kind === "feedback") {
         const fp = ev.verdict === "false_positive";
-        showToast(fp ? "Recorded — alert dismissed" : "Recorded — fault confirmed", fp ? "ok" : "warn");
+        let msg = fp ? "Recorded — alert dismissed" : "Recorded — fault confirmed";
+        if (fp && ev.collected && ev.collected.added)
+          msg += ` (+${ev.collected.added} window${ev.collected.added === 1 ? "" : "s"} learned)`;
+        showToast(msg, fp ? "ok" : "warn");
         if (fp) state.currentEpisodeId = null;
+        if (ev.adaptation) state.adaptation = ev.adaptation;
+        return;
+      }
+      if (ev.kind === "recalibrated") {
+        if (ev.adaptation) state.adaptation = ev.adaptation;
+        showToast(`Recalibrated on ${ev.n_extra} dismissed windows — threshold ${Number(ev.threshold).toFixed(3)}`, "ok");
+        return;
+      }
+      if (ev.kind === "reverted") {
+        if (ev.adaptation) state.adaptation = ev.adaptation;
+        showToast("Reverted to the previous model", "warn");
         return;
       }
       if (ev.kind !== "reading") return;
@@ -641,6 +662,34 @@ const App = {
       }
     }
 
+    const canRecalibrate = computed(() => state.adaptation.extra_healthy > 0 && !state.recalibrating);
+    const canRevert = computed(() => (state.adaptation.snapshots || []).length > 1 && !state.recalibrating);
+
+    async function recalibrate() {
+      if (!canRecalibrate.value) return;
+      state.recalibrating = true;
+      try {
+        const res = await api.recalibrate();
+        if (res.status !== "recalibrated") showToast(res.detail || "Recalibration failed", "warn");
+      } catch (e) {
+        console.error("recalibrate", e);
+        showToast("Recalibration request failed", "warn");
+      } finally {
+        state.recalibrating = false;
+      }
+    }
+
+    async function revert() {
+      if (!canRevert.value) return;
+      try {
+        const res = await api.revert();
+        if (res.status !== "reverted") showToast(res.detail || "Revert failed", "warn");
+      } catch (e) {
+        console.error("revert", e);
+        showToast("Revert request failed", "warn");
+      }
+    }
+
     /* ── source-change side effects ───────────────────── */
 
     watch(
@@ -760,6 +809,10 @@ const App = {
       askFeedback,
       cancelFeedback,
       sendFeedback,
+      canRecalibrate,
+      canRevert,
+      recalibrate,
+      revert,
       // formatters
       formatSimTime,
     };
@@ -819,6 +872,16 @@ const App = {
           <option v-for="opt in SPEED_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
       </label>
+      <div class="adaptation-group" v-if="isRunning">
+        <span class="adaptation-label">
+          Learned <strong>{{ state.adaptation.extra_healthy }}</strong>/{{ state.adaptation.extra_cap }} windows
+          <span class="adaptation-ver" v-if="state.adaptation.snapshots && state.adaptation.snapshots.length">v{{ state.adaptation.snapshots.length - 1 }}</span>
+        </span>
+        <button class="btn" :disabled="!canRecalibrate" @click="recalibrate">
+          {{ state.recalibrating ? 'Recalibrating…' : 'Recalibrate' }}
+        </button>
+        <button class="btn" :disabled="!canRevert" @click="revert">Revert</button>
+      </div>
       <div class="actions">
         <button class="btn btn--primary" :disabled="!canStart" @click="start">Start</button>
         <button class="btn" :data-paused="state.paused" :disabled="!isRunning" @click="togglePause">{{ state.paused ? 'Resume' : 'Pause' }}</button>

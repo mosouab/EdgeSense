@@ -132,11 +132,14 @@ def train_usad(
     val_windows: np.ndarray | None = None,
     early_stopping: EarlyStoppingConfig | None = None,
 ) -> TrainingHistory:
-    """Train USAD with the two-phase loss schedule described in the paper.
+    """Train USAD with a stabilised two-phase adversarial loss schedule.
 
-    The loss weights evolve per epoch:
-      - w_rec = 1 / epoch
-      - w_adv = 1 - 1 / epoch
+    The adversarial weight ramps linearly from 0 to `config.adv_max_weight`
+    over `config.adv_ramp_epochs`, and reconstruction takes the remainder:
+      - w_adv = min(epoch / adv_ramp_epochs, 1) * adv_max_weight
+      - w_rec = 1 - w_adv
+    (This replaces the original paper's w_adv = 1 - 1/epoch, which ramps too
+    fast and destabilises training on small calibration sets.)
 
     Optimizer state and the data loader are created once and reused across
     every epoch, so Adam moments and shuffle order are preserved end-to-end.

@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from sklearn.preprocessing import StandardScaler
 
+from ..evaluation import apply_median_filter
 from ..health import health_score
 from ..models import USADConv1d, USADConv1dConfig
 from ..scoring import ScoringConfig, compute_usad_scores
@@ -466,12 +467,8 @@ class EdgeDevice:
         cal_scores = compute_usad_scores(model, windows, scoring_cfg, show_progress=False)
         # Median-smooth at the configured kernel length.
         kernel = self.cfg.median_smoothing_window
-        if kernel >= 3 and kernel % 2 == 1:
-            half = kernel // 2
-            padded = np.pad(cal_scores, (half, half), mode="edge")
-            smoothed = np.array([
-                np.median(padded[i : i + kernel]) for i in range(len(cal_scores))
-            ], dtype=np.float32)
+        if kernel >= 3 and kernel % 2 == 1 and cal_scores.size:
+            smoothed = apply_median_filter(cal_scores, kernel).astype(np.float32)
         else:
             smoothed = cal_scores
 
@@ -897,15 +894,11 @@ class EdgeDevice:
         kernel = max(3, min(self.cfg.median_smoothing_window, max(3, windows.shape[0] // 20)))
         if kernel % 2 == 0:
             kernel += 1
-        if kernel >= 3:
-            half = kernel // 2
-            padded = np.pad(cal_scores, (half, half), mode="edge")
-            smoothed = np.array(
-                [np.median(padded[i : i + kernel]) for i in range(len(cal_scores))],
-                dtype=np.float32,
-            )
-        else:
-            smoothed = cal_scores
+        smoothed = (
+            apply_median_filter(cal_scores, kernel).astype(np.float32)
+            if cal_scores.size
+            else cal_scores
+        )
 
         threshold = float(np.percentile(smoothed, self.cfg.healthy_quantile))
 

@@ -558,7 +558,7 @@ class HydraulicSource(DataSource):
                         label=f"#{marker_id} {component} = {severity} (first occurrence in stream)",
                         failure_type=f"{component} fault",
                         severity=f"value {severity} (nominal = {NOMINAL_VALUES[component]})",
-                        source="metropt_report",
+                        source="uci_profile",
                         start_time=f"cycle {first}",
                         end_time=f"cycle {first}",
                         start_index=first,

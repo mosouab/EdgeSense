@@ -109,150 +109,50 @@ function alertText(level) {
 }
 
 /* ─────────────────────────────────────────────────────────
-   Sparkline (single-channel mini chart) component
+   Chart.js instance factories (managed imperatively by the root
+   component — no per-event reactive watchers, redrawn in an rAF loop)
    ───────────────────────────────────────────────────────── */
 
-const Sparkline = {
-  props: { points: { type: Array, required: true }, height: { type: Number, default: 36 } },
-  setup(props) {
-    const canvasRef = ref(null);
-    let chart = null;
+function makeSparkChart(canvas) {
+  return new Chart(canvas, {
+    type: "line",
+    data: { labels: [], datasets: [{ data: [], borderColor: PALETTE.accent, borderWidth: 1.4, pointRadius: 0, tension: 0.25, fill: false }] },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { x: { display: false }, y: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+}
 
-    function ensure() {
-      if (!canvasRef.value || typeof Chart === "undefined") return;
-      if (chart) return;
-      chart = new Chart(canvasRef.value, {
-        type: "line",
-        data: {
-          labels: props.points.map((_, i) => i),
-          datasets: [
-            {
-              data: props.points.slice(),
-              borderColor: PALETTE.accent,
-              borderWidth: 1.4,
-              pointRadius: 0,
-              tension: 0.25,
-              fill: false,
-            },
-          ],
+function makeScoreChartInstance(canvas) {
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label: "Score", data: [], borderColor: PALETTE.accent, backgroundColor: "rgba(6, 182, 212, 0.05)", borderWidth: 1.6, pointRadius: 0, tension: 0.18, fill: true },
+        { label: "Threshold", data: [], borderColor: PALETTE.threshold, borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0, fill: false },
+      ],
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { display: false },
+        y: {
+          ticks: { color: PALETTE.muted, font: { size: 10, family: "JetBrains Mono" } },
+          grid: { color: PALETTE.grid },
+          border: { color: PALETTE.grid },
         },
-        options: {
-          animation: false,
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: { x: { display: false }, y: { display: false } },
-          plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        },
-      });
-    }
-
-    onMounted(() => ensure());
-    onUnmounted(() => {
-      if (chart) chart.destroy();
-      chart = null;
-    });
-
-    watch(
-      () => props.points,
-      (pts) => {
-        ensure();
-        if (!chart) return;
-        chart.data.labels = pts.map((_, i) => i);
-        chart.data.datasets[0].data = pts.slice();
-        chart.update("none");
       },
-      { deep: true },
-    );
-
-    return { canvasRef };
-  },
-  template: `
-    <div class="sensor-spark"><canvas ref="canvasRef"></canvas></div>
-  `,
-};
-
-/* ─────────────────────────────────────────────────────────
-   Score chart
-   ───────────────────────────────────────────────────────── */
-
-const ScoreChart = {
-  props: { history: { type: Array, required: true } },
-  setup(props) {
-    const canvasRef = ref(null);
-    let chart = null;
-
-    function ensure() {
-      if (!canvasRef.value || typeof Chart === "undefined") return;
-      if (chart) return;
-      chart = new Chart(canvasRef.value, {
-        type: "line",
-        data: {
-          labels: [],
-          datasets: [
-            {
-              label: "Score",
-              data: [],
-              borderColor: PALETTE.accent,
-              backgroundColor: "rgba(6, 182, 212, 0.05)",
-              borderWidth: 1.6,
-              pointRadius: 0,
-              tension: 0.18,
-              fill: true,
-            },
-            {
-              label: "Threshold",
-              data: [],
-              borderColor: PALETTE.threshold,
-              borderWidth: 1.2,
-              borderDash: [6, 4],
-              pointRadius: 0,
-              fill: false,
-            },
-          ],
-        },
-        options: {
-          animation: false,
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { display: false },
-            y: {
-              ticks: { color: PALETTE.muted, font: { size: 10, family: "JetBrains Mono" } },
-              grid: { color: PALETTE.grid },
-              border: { color: PALETTE.grid },
-            },
-          },
-          plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        },
-      });
-    }
-
-    onMounted(() => {
-      ensure();
-      applyHistory();
-    });
-    onUnmounted(() => {
-      if (chart) chart.destroy();
-      chart = null;
-    });
-
-    function applyHistory() {
-      if (!chart) return;
-      const h = props.history;
-      chart.data.labels = h.map((_, i) => i);
-      chart.data.datasets[0].data = h.map((p) => p.score);
-      chart.data.datasets[1].data = h.map((p) => p.threshold);
-      chart.update("none");
-    }
-
-    watch(() => props.history, applyHistory, { deep: true });
-
-    return { canvasRef };
-  },
-  template: `
-    <div class="score-chart-wrap"><canvas ref="canvasRef"></canvas></div>
-  `,
-};
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+}
 
 /* ─────────────────────────────────────────────────────────
    Gauge — semicircle health % display
@@ -295,7 +195,7 @@ const HealthGauge = {
    ───────────────────────────────────────────────────────── */
 
 const App = {
-  components: { Sparkline, ScoreChart, HealthGauge },
+  components: { HealthGauge },
   setup() {
     /* ── state ─────────────────────────────────────────── */
 
@@ -316,16 +216,13 @@ const App = {
       progress: 0,
       paused: false,
 
-      // live values
+      // live values (updated at most once per animation frame, not per event)
       score: null,
       threshold: null,
       health: null,
       alertLevel: "ok",
       elapsedSeconds: 0,
-
-      // streams
-      sensorTraces: {}, // {channel: [values]}
-      scoreHistory: [], // [{score, threshold}]
+      sensorLatest: {}, // {channel: latest value} — only the displayed number
 
       // synthesis
       contributors: [],
@@ -344,6 +241,23 @@ const App = {
     });
 
     const ws = ref(null);
+
+    /* ── non-reactive render buffers ───────────────────────
+       High-frequency data (chart points + the latest reading scalars) is
+       kept OUT of Vue reactivity. The WS handler writes here cheaply; a
+       single rAF loop throttles all reactive updates + chart redraws to one
+       animation frame, so event rate (hundreds/sec at high speed) never
+       drives hundreds of re-renders/sec. */
+    const traceBuffers = {}; // {channel: number[]} — plain arrays
+    const scoreBuf = [];     // smoothed scores
+    const thrBuf = [];       // threshold aligned with scoreBuf
+    let pendingReading = null; // latest reading event, for batched scalar flush
+    let streamDirty = false;
+    let sensorCharts = [];   // Chart[] (non-reactive)
+    let scoreChartInst = null;
+    let rafHandle = null;
+    let lastFlush = 0;
+    const FLUSH_MS = 33;     // ~30 fps cap
 
     /* ── derived ───────────────────────────────────────── */
 
@@ -372,30 +286,97 @@ const App = {
       return map;
     });
 
-    /* ── tx helpers ────────────────────────────────────── */
-
-    function ensureTrace(channel) {
-      if (!state.sensorTraces[channel]) state.sensorTraces[channel] = [];
-      return state.sensorTraces[channel];
-    }
-
-    function pushScorePoint(score, threshold) {
-      state.scoreHistory.push({ score, threshold });
-      if (state.scoreHistory.length > MAX_TRACE) state.scoreHistory.shift();
-    }
-
-    function pushSensor(channel, value) {
-      const arr = ensureTrace(channel);
-      arr.push(value);
-      if (arr.length > MAX_TRACE) arr.shift();
-    }
+    /* ── render buffers + throttled flush ──────────────── */
 
     function resetStreams() {
-      state.scoreHistory = [];
-      state.sensorTraces = {};
+      for (const k of Object.keys(traceBuffers)) delete traceBuffers[k];
+      scoreBuf.length = 0;
+      thrBuf.length = 0;
+      pendingReading = null;
+      streamDirty = false;
+      state.sensorLatest = {};
       state.contributors = [];
       state.forecast = null;
       state.diagnosis = null;
+      state.score = null;
+      state.threshold = null;
+      state.health = null;
+      state.alertLevel = "ok";
+      // Clear the chart canvases immediately.
+      sensorCharts.forEach((c) => {
+        if (!c) return;
+        c.data.labels = [];
+        c.data.datasets[0].data = [];
+        c.update("none");
+      });
+      if (scoreChartInst) {
+        scoreChartInst.data.labels = [];
+        scoreChartInst.data.datasets[0].data = [];
+        scoreChartInst.data.datasets[1].data = [];
+        scoreChartInst.update("none");
+      }
+    }
+
+    function buildCharts() {
+      sensorCharts.forEach((c) => c && c.destroy());
+      sensorCharts = [];
+      primaryChannels.value.forEach((_, i) => {
+        const canvas = document.getElementById(`spark-${i}`);
+        if (canvas) sensorCharts[i] = makeSparkChart(canvas);
+      });
+      const sc = document.getElementById("score-canvas");
+      if (scoreChartInst) scoreChartInst.destroy();
+      scoreChartInst = sc ? makeScoreChartInstance(sc) : null;
+    }
+
+    function flush() {
+      // 1) batched scalar update (one reactive mutation set per frame)
+      const ev = pendingReading;
+      if (ev) {
+        if (typeof ev.score === "number") {
+          state.score = ev.score;
+          state.threshold = ev.threshold;
+        }
+        if (typeof ev.health === "number") state.health = ev.health;
+        if (ev.alert_level) state.alertLevel = ev.alert_level;
+        if (ev.phase) state.phase = ev.phase;
+        if (typeof ev.elapsed_simulated_seconds === "number")
+          state.elapsedSeconds = ev.elapsed_simulated_seconds;
+        if (Array.isArray(ev.contributors)) state.contributors = ev.contributors;
+        if (ev.forecast !== undefined) state.forecast = ev.forecast;
+        if (ev.diagnosis !== undefined) state.diagnosis = ev.diagnosis;
+        // latest sensor cell numbers
+        const latest = {};
+        primaryChannels.value.forEach((ch) => {
+          const buf = traceBuffers[ch];
+          if (buf && buf.length) latest[ch] = buf[buf.length - 1];
+        });
+        state.sensorLatest = latest;
+      }
+      // 2) redraw charts directly from plain buffers
+      sensorCharts.forEach((c, i) => {
+        if (!c) return;
+        const ch = primaryChannels.value[i];
+        const buf = traceBuffers[ch] || [];
+        c.data.labels = buf.map((_, k) => k);
+        c.data.datasets[0].data = buf;
+        c.update("none");
+      });
+      if (scoreChartInst) {
+        scoreChartInst.data.labels = scoreBuf.map((_, k) => k);
+        scoreChartInst.data.datasets[0].data = scoreBuf;
+        scoreChartInst.data.datasets[1].data = thrBuf;
+        scoreChartInst.update("none");
+      }
+    }
+
+    function renderLoop(ts) {
+      if (streamDirty && ts - lastFlush >= FLUSH_MS) {
+        lastFlush = ts;
+        streamDirty = false;
+        flush();
+      }
+      rafHandle = requestAnimationFrame(renderLoop);
     }
 
     /* ── WebSocket ─────────────────────────────────────── */
@@ -426,6 +407,7 @@ const App = {
     }
 
     function handleEvent(ev) {
+      // Phase events are rare and drive the progress bar — apply immediately.
       if (ev.kind === "phase") {
         state.phase = ev.phase || "idle";
         state.phaseDetail = ev.detail || "";
@@ -434,31 +416,27 @@ const App = {
       }
       if (ev.kind !== "reading") return;
 
-      // sensor cells
+      // Reading events are high-frequency: write to plain buffers only, mark
+      // dirty, and let the rAF loop flush to the UI at most once per frame.
       const features = ev.features || {};
       primaryChannels.value.forEach((channel) => {
         const v = features[channel];
-        if (typeof v === "number") pushSensor(channel, v);
+        if (typeof v !== "number") return;
+        let buf = traceBuffers[channel];
+        if (!buf) buf = traceBuffers[channel] = [];
+        buf.push(v);
+        if (buf.length > MAX_TRACE) buf.shift();
       });
-
-      // score
       if (typeof ev.score === "number") {
-        state.score = ev.score;
-        state.threshold = ev.threshold;
-        pushScorePoint(ev.score, ev.threshold);
+        scoreBuf.push(ev.score);
+        thrBuf.push(ev.threshold);
+        if (scoreBuf.length > MAX_TRACE) {
+          scoreBuf.shift();
+          thrBuf.shift();
+        }
       }
-
-      // top-line
-      if (typeof ev.health === "number") state.health = ev.health;
-      if (ev.alert_level) state.alertLevel = ev.alert_level;
-      if (ev.phase) state.phase = ev.phase;
-      if (typeof ev.elapsed_simulated_seconds === "number")
-        state.elapsedSeconds = ev.elapsed_simulated_seconds;
-
-      // synthesis
-      if (Array.isArray(ev.contributors)) state.contributors = ev.contributors;
-      if (ev.forecast !== undefined) state.forecast = ev.forecast;
-      if (ev.diagnosis !== undefined) state.diagnosis = ev.diagnosis;
+      pendingReading = ev;
+      streamDirty = true;
     }
 
     /* ── REST control ──────────────────────────────────── */
@@ -609,6 +587,10 @@ const App = {
         const spec = state.sources.find((s) => s.name === name);
         if (spec) state.calibSamples = spec.suggested_calibration ?? state.calibSamples;
         loadFailures();
+        // Channel set changed → the sensor canvases are re-rendered; rebuild
+        // the chart instances against the new DOM nodes on the next tick.
+        resetStreams();
+        nextTick(buildCharts);
       },
     );
 
@@ -617,10 +599,16 @@ const App = {
     onMounted(async () => {
       await loadSources();
       await loadFailures();
+      await nextTick();
+      buildCharts();
+      rafHandle = requestAnimationFrame(renderLoop);
       openSocket();
     });
 
     onUnmounted(() => {
+      if (rafHandle) cancelAnimationFrame(rafHandle);
+      sensorCharts.forEach((c) => c && c.destroy());
+      if (scoreChartInst) scoreChartInst.destroy();
       if (ws.value) try { ws.value.close(); } catch (_) {}
     });
 
@@ -850,14 +838,12 @@ const App = {
           </header>
           <div class="panel-body">
             <div class="sensors-grid">
-              <div v-for="(ch, i) in primaryChannels" :key="ch" class="sensor-cell">
+              <div v-for="(ch, i) in primaryChannels" :key="i" class="sensor-cell">
                 <div class="sensor-name">{{ channelLabels[ch] || ch }}</div>
                 <div class="sensor-value">
-                  {{ state.sensorTraces[ch] && state.sensorTraces[ch].length
-                       ? state.sensorTraces[ch][state.sensorTraces[ch].length - 1].toFixed(2)
-                       : '—' }}
+                  {{ state.sensorLatest[ch] != null ? state.sensorLatest[ch].toFixed(2) : '—' }}
                 </div>
-                <Sparkline :points="state.sensorTraces[ch] || []" />
+                <div class="sensor-spark"><canvas :id="'spark-' + i"></canvas></div>
               </div>
             </div>
           </div>
@@ -870,7 +856,7 @@ const App = {
             <span class="panel-head-aux">{{ state.score == null ? '—' : state.score.toFixed(3) }}</span>
           </header>
           <div class="panel-body">
-            <ScoreChart :history="state.scoreHistory" />
+            <div class="score-chart-wrap"><canvas id="score-canvas"></canvas></div>
             <div class="score-legend">
               <span><span class="score-legend-marker"></span>Score (smoothed)</span>
               <span><span class="score-legend-marker score-legend-marker--threshold"></span>Threshold</span>

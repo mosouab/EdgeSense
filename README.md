@@ -66,6 +66,22 @@ The classic predictive-maintenance benchmark. 100 turbofans run from healthy to 
 ![RUL trajectory across a test engine's life](figures/11_cmapss_rul_trajectory.png)
 
 
+## Edge footprint
+The whole point of running on-asset is that inference is cheap. We benchmarked the **real** pipeline — parity-checked against the offline scorer within 1e-5, on real eval-region windows, one window at a time — on a Pi-class proxy (`taskset -c 0`, one PyTorch thread).
+
+> **Pi-class proxy: 1 CPU core, 512 MB — not measured on physical Pi hardware.**
+
+On one core, per-window inference (including per-feature attribution and the Layer-3 latent match) runs in **0.44–0.56 ms median (p99 < 1 ms)** at **1,680–2,030 windows/sec**. The assets only need a window every 500 s (Metro.PT) to 6 h (CMAPSS), so a single core has **117,829× to 43,889,472× headroom** — i.e. one cheap core could in principle monitor that many assets of each type. The model is **41.5k parameters / 0.166 MB**, and a warm start loads it in **2.1 s** vs ~75 s to calibrate-and-train cold.
+
+![Achieved vs required throughput](reports/edge_benchmark/headroom.png)
+
+![Assets per 1-core device](reports/edge_benchmark/assets_per_device.png)
+
+![Memory footprint vs 512 MB](reports/edge_benchmark/footprint.png)
+
+**Honest caveat on memory:** the model is 0.166 MB, but the fp32 **PyTorch x86 runtime** alone maps ~458 MB into RSS, so the full inference process is ~558 MB — *over* the 512 MB line. That's the x86 PyTorch+MKL runtime, not EdgeSense; it's the one number where the x86 proxy isn't Pi-representative. Shrinking it (ONNX Runtime / TFLite) is a deliberate next pass — quantization/export is out of scope here. Full protocol, per-stage numbers, and the captured run are in [docs/EDGE_BENCHMARK.md](docs/EDGE_BENCHMARK.md); raw metrics in [`reports/edge_benchmark/metrics.json`](reports/edge_benchmark/metrics.json).
+
+
 ## Running it yourself
 We use `uv` for environment management.
 

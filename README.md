@@ -26,7 +26,7 @@ The architecture below is a USAD-style 1D-CNN autoencoder: shared encoder, two d
 
 ## Results
 
-### Metro do Porto compressors — air-leak detection
+### Metro do Porto compressors: air-leak detection
 Real-world data from the Porto metro, 7 months of compressor sensor readings. We train on 2 months of pre-failure data, use 2 weeks of on-site data to calibrate the alert threshold, then run detection for the remaining 4.5 months.
 
 | | Recall | Precision | F1 | AUC |
@@ -40,7 +40,7 @@ On-site recalibration roughly doubles F1. Even better, when we audited our top f
 
 ![Health Score timeline](figures/12_metropt_health_score.png)
 
-### UCI Hydraulic Systems — multi-component fault detection
+### UCI Hydraulic Systems: multi-component fault detection
 2205 test cycles of a hydraulic rig with four independently degrading components. We train one model per component on its own healthy cycles.
 
 | Component | AUC | F1 (at p99 threshold) |
@@ -54,7 +54,7 @@ Three of four fault modes are picked up cleanly. The valve fails because the rel
 
 ![Per-component fault detection](figures/09_hydraulic_per_component.png)
 
-### NASA CMAPSS FD001 — turbofan remaining useful life
+### NASA CMAPSS FD001: turbofan remaining useful life
 The classic predictive-maintenance benchmark. 100 turbofans run from healthy to failure; we predict how many cycles each test engine has left.
 
 - **RMSE: 15 cycles** (Babu's 2016 CNN baseline: 18.5, Zheng's 2017 LSTM baseline: 16.1)
@@ -67,11 +67,11 @@ The classic predictive-maintenance benchmark. 100 turbofans run from healthy to 
 
 
 ## Edge footprint
-The whole point of running on-asset is that inference is cheap. We benchmarked the **real** pipeline — parity-checked against the offline scorer within 1e-5, on real eval-region windows, one window at a time — on a Pi-class proxy (`taskset -c 0`, one PyTorch thread).
+The whole point of running on-asset is that inference is cheap. We benchmarked the **real** pipeline (parity-checked against the offline scorer within 1e-5, on real eval-region windows, one window at a time) on a Pi-class proxy (`taskset -c 0`, one PyTorch thread).
 
-> **Pi-class proxy: 1 CPU core, 512 MB — not measured on physical Pi hardware.**
+> **Pi-class proxy: 1 CPU core, 512 MB, not measured on physical Pi hardware.**
 
-On one core, per-window inference (including per-feature attribution and the Layer-3 latent match) runs in **0.44–0.56 ms median (p99 < 1 ms)** at **1,680–2,030 windows/sec**. The assets only need a window every 500 s (Metro.PT) to 6 h (CMAPSS), so a single core has **117,829× to 43,889,472× headroom** — i.e. one cheap core could in principle monitor that many assets of each type. The model is **41.5k parameters / 0.166 MB**, and a warm start loads it in **2.1 s** vs ~75 s to calibrate-and-train cold.
+On one core, per-window inference (including per-feature attribution and the Layer-3 latent match) runs in **0.44–0.56 ms median (p99 < 1 ms)** at **1,680–2,030 windows/sec**. The assets only need a window every 500 s (Metro.PT) to 6 h (CMAPSS), so a single core has **117,829× to 43,889,472× headroom**: one cheap core could in principle monitor that many assets of each type. The model is **41.5k parameters / 0.166 MB**, and a warm start loads it in **2.1 s** vs ~75 s to calibrate-and-train cold.
 
 ![Achieved vs required throughput](reports/edge_benchmark/headroom.png)
 
@@ -79,7 +79,7 @@ On one core, per-window inference (including per-feature attribution and the Lay
 
 ![Memory footprint vs 512 MB](reports/edge_benchmark/footprint.png)
 
-**Honest caveat on memory:** the model is 0.166 MB, but the fp32 **PyTorch x86 runtime** alone maps ~458 MB into RSS, so the full inference process is ~558 MB — *over* the 512 MB line. That's the x86 PyTorch+MKL runtime, not EdgeSense; it's the one number where the x86 proxy isn't Pi-representative. Shrinking it (ONNX Runtime / TFLite) is a deliberate next pass — quantization/export is out of scope here. Full protocol, per-stage numbers, and the captured run are in [docs/EDGE_BENCHMARK.md](docs/EDGE_BENCHMARK.md); raw metrics in [`reports/edge_benchmark/metrics.json`](reports/edge_benchmark/metrics.json).
+**Honest caveat on memory:** the model is 0.166 MB, but the fp32 **PyTorch x86 runtime** alone maps ~458 MB into RSS, so the full inference process is ~558 MB, *over* the 512 MB line. That's the x86 PyTorch+MKL runtime, not EdgeSense; it's the one number where the x86 proxy isn't Pi-representative. Shrinking it (ONNX Runtime / TFLite) is a deliberate next pass; quantization/export is out of scope here. Full protocol, per-stage numbers, and the captured run are in [docs/EDGE_BENCHMARK.md](docs/EDGE_BENCHMARK.md); raw metrics in [`reports/edge_benchmark/metrics.json`](reports/edge_benchmark/metrics.json).
 
 
 ## Running it yourself
@@ -96,9 +96,9 @@ uv run python scripts/generate_multi_dataset_figures.py
 The Metro.PT CSV ships with the repo. The Hydraulic and CMAPSS scripts download their datasets on first run (about 80 MB and 10 MB respectively).
 
 ## Papers we built on
-- Audibert et al. 2020 — the USAD architecture
-- Veloso et al. 2022 — the Metro.PT dataset
-- Helwig et al. 2015 — the Hydraulic Systems dataset
-- Saxena et al. 2008 — CMAPSS dataset and asymmetric scoring metric
-- Babu et al. 2016 and Zheng et al. 2017 — the CMAPSS deep-learning baselines we compare against
-- Kim et al. 2022 — why point-adjusted F1 inflates anomaly-detection metrics, which is why we don't lead with it
+- Audibert et al. 2020: the USAD architecture
+- Veloso et al. 2022: the Metro.PT dataset
+- Helwig et al. 2015: the Hydraulic Systems dataset
+- Saxena et al. 2008: CMAPSS dataset and asymmetric scoring metric
+- Babu et al. 2016 and Zheng et al. 2017: the CMAPSS deep-learning baselines we compare against
+- Kim et al. 2022: why point-adjusted F1 inflates anomaly-detection metrics, which is why we don't lead with it

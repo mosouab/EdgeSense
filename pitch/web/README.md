@@ -9,6 +9,12 @@ Fill in the two dashed-yellow placeholders on slide 1 (`Prénom NOM` for the tea
 in `index.html`, then remove the `fill-me` class. Delete the tutor line if there is none.
 The speaker notes say "Je m'appelle [Prénom]" on slide 1 too.
 
+## Script
+
+`SCRIPT.md` is the full spoken script in French (same words as the presenter-view notes), with
+click and gesture cues, the 7-idea structure to memorise, likely jury questions with answers, and
+the 60–90 s pitch phrase. Print it for rehearsal.
+
 ## Presenting
 
 | Key | Action |

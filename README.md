@@ -1,8 +1,8 @@
 # EdgeSense
 
-A predictive-maintenance platform for industrial machines. The model learns what *healthy* looks like from unlabeled sensor data, then warns you when things start drifting and tells you (when it can) how much life the asset has left. Everything runs locally on the asset, so there's no raw-sensor stream going to the cloud and no labeled failure dataset required to deploy.
+A predictive-maintenance platform for industrial machines. The model learns what *healthy* looks like from unlabeled sensor data, then warns you when things start drifting. Everything runs locally on the asset, so there's no raw-sensor stream going to the cloud and no labeled failure dataset required to deploy.
 
-We validated it on three public datasets covering three very different failure profiles: sudden-onset detection on a Porto metro compressor, multi-component fault detection on a hydraulic test rig, and remaining-useful-life prediction on NASA turbofan engines.
+We validated it on two public datasets with very different failure profiles: sudden-onset detection on a Porto metro compressor and multi-component fault detection on a hydraulic test rig.
 
 ## Why this exists
 Unplanned downtime is expensive, and the standard ways to predict it have three structural problems we wanted to fix in one go:
@@ -14,13 +14,12 @@ Unplanned downtime is expensive, and the standard ways to predict it have three 
 EdgeSense addresses all three at once: an unsupervised model that learns each asset's normal operating envelope from a couple of weeks of healthy data, runs inference locally on an edge device, and adapts to different machine types and failure profiles with the same architecture.
 
 ## What it gives the operator
-Three concrete outputs, all from the same model:
+Two concrete outputs, both from the same model:
 
 1. **Anomaly score** per window of sensor data. Higher means "looks less like what I learned during calibration".
 2. **Health Score from 0 to 100%**. A single intuitive number an operator can read at a glance.
-3. **Remaining Useful Life** in cycles, for components that degrade gradually.
 
-The architecture below is a USAD-style 1D-CNN autoencoder: shared encoder, two decoders that play a minimax game during training. For RUL we attach a small MLP head on top of the encoder's latent representation.
+The architecture below is a USAD-style 1D-CNN autoencoder: shared encoder, two decoders that play a minimax game during training.
 
 ![Architecture](figures/architecture.png)
 
@@ -54,24 +53,12 @@ Three of four fault modes are picked up cleanly. The valve fails because the rel
 
 ![Per-component fault detection](figures/09_hydraulic_per_component.png)
 
-### NASA CMAPSS FD001: turbofan remaining useful life
-The classic predictive-maintenance benchmark. 100 turbofans run from healthy to failure; we predict how many cycles each test engine has left.
-
-- **RMSE: 15 cycles** (Babu's 2016 CNN baseline: 18.5, Zheng's 2017 LSTM baseline: 16.1)
-- **Pearson correlation with true RUL: 0.93**
-- CMAPSS asymmetric score: 367
-
-![Predicted vs true RUL](figures/10_cmapss_rul_scatter.png)
-
-![RUL trajectory across a test engine's life](figures/11_cmapss_rul_trajectory.png)
-
-
 ## Edge footprint
 The whole point of running on-asset is that inference is cheap. We benchmarked the **real** pipeline (parity-checked against the offline scorer within 1e-5, on real eval-region windows, one window at a time) on a Pi-class proxy (`taskset -c 0`, one PyTorch thread).
 
 > **Pi-class proxy: 1 CPU core, 512 MB, not measured on physical Pi hardware.**
 
-On one core, per-window inference (including per-feature attribution and the Layer-3 latent match) runs in **0.44–0.56 ms median (p99 < 1 ms)** at **1,680–2,030 windows/sec**. The assets only need a window every 500 s (Metro.PT) to 6 h (CMAPSS), so a single core has **117,829× to 43,889,472× headroom**: one cheap core could in principle monitor that many assets of each type. The model is **41.5k parameters / 0.166 MB**, and a warm start loads it in **2.1 s** vs ~75 s to calibrate-and-train cold.
+On one core, per-window inference (including per-feature attribution and the Layer-3 latent match) runs in **0.48–0.56 ms median (p99 < 1 ms)** at **1,680–1,960 windows/sec**. The assets only need a window every 60 s (Hydraulic) to 500 s (Metro.PT), so a single core has **117,829× to 840,630× headroom**: one cheap core could in principle monitor that many assets of each type. The model is **41.5k parameters / 0.166 MB**, and a warm start loads it in **2.1 s** vs ~75 s to calibrate-and-train cold.
 
 ![Achieved vs required throughput](reports/edge_benchmark/headroom.png)
 
@@ -89,16 +76,13 @@ We use `uv` for environment management.
 uv sync
 uv run python scripts/run_full_evaluation.py        # Metro.PT
 uv run python scripts/run_hydraulic_evaluation.py   # UCI Hydraulic
-uv run python scripts/run_cmapss_evaluation.py      # NASA CMAPSS
 uv run python scripts/generate_multi_dataset_figures.py
 ```
 
-The Metro.PT CSV ships with the repo. The Hydraulic and CMAPSS scripts download their datasets on first run (about 80 MB and 10 MB respectively).
+The Metro.PT CSV ships with the repo (via Git LFS). The Hydraulic dataset (about 80 MB) is fetched separately; the loader prints the download command if it's missing.
 
 ## Papers we built on
 - Audibert et al. 2020: the USAD architecture
 - Veloso et al. 2022: the Metro.PT dataset
 - Helwig et al. 2015: the Hydraulic Systems dataset
-- Saxena et al. 2008: CMAPSS dataset and asymmetric scoring metric
-- Babu et al. 2016 and Zheng et al. 2017: the CMAPSS deep-learning baselines we compare against
 - Kim et al. 2022: why point-adjusted F1 inflates anomaly-detection metrics, which is why we don't lead with it

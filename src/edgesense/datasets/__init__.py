@@ -10,8 +10,6 @@ Available adapters:
   air-leak failure intervals). Detection-style evaluation.
 - hydraulic: UCI Condition Monitoring of Hydraulic Systems (per-cycle
   instances, multi-component fault labels). Multi-fault detection.
-- cmapss: NASA CMAPSS turbofan degradation dataset (run-to-failure cycles
-  with RUL ground truth). RUL regression.
 """
 
 from .metropt import (

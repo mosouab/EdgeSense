@@ -27,7 +27,7 @@ class SensorEvent:
 
     `features` is the per-channel scalar reading for source kinds where
     each event is a single timestep (Metro.PT). For cycle-based sources
-    (Hydraulic, CMAPSS) `cycle_features` carries a (T, F) matrix and
+    (Hydraulic) `cycle_features` carries a (T, F) matrix and
     `features` holds the last timestep so the UI can still show one
     scalar per channel.
 
@@ -81,19 +81,6 @@ class SourceSpec:
     natural_unit: str
     suggested_calibration_units: int
     cycle_based: bool = False
-    output_kind: str = "anomaly"  # "anomaly" | "anomaly+rul"
-    # Time-unit translation for the RUL display. `cycle_label` is the
-    # domain-specific name (e.g. "flight cycle"). `hours_per_cycle` lets
-    # the UI render RUL in days/hours instead of abstract cycles.
-    cycle_label: str = "cycle"
-    hours_per_cycle: float | None = None
-    # For datasets where the simulator paces events faster than real asset
-    # time (e.g. CMAPSS treats each cycle as 30 sim seconds but a real
-    # flight cycle is ~6 hours), this ratio converts the
-    # `elapsed_simulated_seconds` field on each event to real asset
-    # seconds so trend forecasts can be expressed in operator-meaningful
-    # time units.
-    simulated_to_asset_seconds: float = 1.0
     # Operator-readable description for each sensor variable. Maps the raw
     # variable name (e.g. "TP2") to a short human phrase ("Compressed air
     # pressure at compressor outlet (bar)"). Used to label the per-channel
@@ -356,7 +343,6 @@ class HydraulicSource(DataSource):
             natural_unit="cycle",
             suggested_calibration_units=200,
             cycle_based=True,
-            output_kind="anomaly",
             feature_descriptions={
                 "PS1": "Cooler inlet pressure (bar)",
                 "PS2": "Cooler outlet pressure (bar)",
@@ -569,280 +555,12 @@ class HydraulicSource(DataSource):
         return markers
 
 
-class CMAPSSSource(DataSource):
-    """NASA CMAPSS FD001: streams cycle-by-cycle from chosen training units
-    for calibration, then walks through test units to demonstrate inference.
-
-    Each event is one cycle (a (1, 14) feature vector). The device needs to
-    buffer 30 consecutive cycles before scoring (window_length = 30).
-    """
-
-    SECONDS_PER_CYCLE = 30
-    # Only cycles with RUL above this floor count as a healthy calibration
-    # baseline. RUL is clipped at MAX_RUL = 125, so the flat early-life
-    # plateau sits at 125; 100 keeps that plateau plus a little margin while
-    # excluding the degradation tail.
-    HEALTHY_RUL_FLOOR = 100.0
-
-    def __init__(
-        self,
-        train_units_for_calibration: int = 10,
-        calibration_size: int | None = None,
-    ) -> None:
-        self._train_units_for_calibration = train_units_for_calibration
-        self._calibration_size = calibration_size
-        self._loaded = False
-        self._dataset = None
-        self._sequence: list[dict] = []
-        self._calib_end: int = 0
-        self.spec = SourceSpec(
-            name="cmapss",
-            display_name="NASA CMAPSS turbofan",
-            feature_names=[],
-            primary_channels=[],
-            window_length=30,
-            stride=1,
-            natural_unit="cycle",
-            suggested_calibration_units=1500,
-            cycle_based=True,
-            output_kind="anomaly",
-            cycle_label="flight cycle",
-            # Commercial-fleet rule-of-thumb: ~4 flight cycles per day across
-            # short- and long-haul averaged together → ~6 hours per cycle.
-            hours_per_cycle=6.0,
-            # Sim emits 1 event per 30 simulated seconds; each real flight
-            # cycle is ~6 h = 21 600 s of asset time. Trend forecasts use
-            # this ratio to translate the regression slope into wall-clock.
-            simulated_to_asset_seconds=720.0,
-            # Mapping from CMAPSS sensor index (per Saxena et al. 2008) to the
-            # turbofan station / instrumentation an operator would recognise.
-            feature_descriptions={
-                "sensor_2": "LPC outlet temperature (T24)",
-                "sensor_3": "HPC outlet temperature (T30)",
-                "sensor_4": "LPT outlet temperature (T50)",
-                "sensor_7": "HPC outlet pressure (P30)",
-                "sensor_8": "Fan speed (physical RPM)",
-                "sensor_9": "Core speed (physical RPM)",
-                "sensor_11": "HPC outlet static pressure (Ps30)",
-                "sensor_12": "Fuel flow / Ps30 ratio",
-                "sensor_13": "Fan speed (corrected RPM)",
-                "sensor_14": "Core speed (corrected RPM)",
-                "sensor_15": "Bypass ratio",
-                "sensor_17": "Bleed enthalpy",
-                "sensor_20": "HPT coolant bleed (lbm/s)",
-                "sensor_21": "LPT coolant bleed (lbm/s)",
-            },
-            suggested_actions={
-                "sensor_2": "Borescope LPC stages; check inlet condition and bird-strike damage",
-                "sensor_3": "Borescope HPC blades; check combustor liner for hot spots",
-                "sensor_4": "Borescope LPT blades; check for tip rub and erosion",
-                "sensor_7": "Verify HPC airflow path; check for compressor fouling or VBV setting",
-                "sensor_8": "Inspect fan blades, spinner, and N1 spool bearings",
-                "sensor_9": "Inspect N2 spool bearings and gearbox health",
-                "sensor_11": "Cross-check P30 sensor against sensor_7; possible probe drift",
-                "sensor_12": "Check fuel metering unit and HP fuel nozzles for partial blockage",
-                "sensor_13": "Cross-check vs physical fan RPM; verify N1 trim",
-                "sensor_14": "Cross-check vs physical core RPM; verify N2 trim",
-                "sensor_15": "Audit overall thrust split and engine balance",
-                "sensor_17": "Inspect bleed valve and customer-bleed air system for leaks",
-                "sensor_20": "Inspect HPT cooling circuit and bleed plumbing",
-                "sensor_21": "Inspect LPT cooling circuit and bleed plumbing",
-            },
-            diagnosis_rules=[
-                {
-                    "name": "HPC section degradation",
-                    "requires": ["sensor_3", "sensor_7"],
-                    "action": "Borescope inspection of HPC blades and stator vanes; check VBV and VSV schedule.",
-                },
-                {
-                    "name": "Turbine section wear",
-                    "requires": ["sensor_4", "sensor_20"],
-                    "action": "Borescope inspection of HPT/LPT blades for tip rub and erosion; verify cooling-flow plumbing.",
-                },
-                {
-                    "name": "Fuel system fault suspected",
-                    "requires": ["sensor_12", "sensor_3"],
-                    "action": "Inspect HP fuel pump and fuel metering unit; flow-test HP fuel nozzles for partial blockage.",
-                },
-                {
-                    "name": "Compressor fouling pattern",
-                    "requires": ["sensor_2", "sensor_3"],
-                    "action": "Schedule on-wing compressor wash; inspect inlet for FOD and ice damage.",
-                },
-                {
-                    "name": "Bleed-air system anomaly",
-                    "requires": ["sensor_17", "sensor_20"],
-                    "action": "Inspect bleed valves, ducting and customer-bleed return path for leaks or stuck valves.",
-                },
-            ],
-        )
-
-    def _ensure_loaded(self) -> None:
-        if self._loaded:
-            return
-        from ..datasets.cmapss import MAX_RUL, load_cmapss_fd001
-
-        self._dataset = load_cmapss_fd001()
-        feature_cols = self._dataset.feature_columns
-        self.spec.feature_names.clear()
-        self.spec.feature_names.extend(feature_cols)
-        # Heuristic primary channels: pick a few that vary visibly.
-        self.spec.primary_channels[:] = feature_cols[:4]
-
-        # Build the streaming sequence. We want exactly `requested` healthy
-        # train-unit cycles in front so that calibration ends right when the
-        # user expects, and inference begins on test-unit data immediately.
-        requested = self._calibration_size or self.spec.suggested_calibration_units
-
-        rng = np.random.default_rng(42)
-        train_unit_ids = sorted(self._dataset.train_units.keys())
-        rng.shuffle(train_unit_ids)
-
-        # Calibration must learn what HEALTHY looks like, so we only feed the
-        # early-life cycles of each train unit (RUL > HEALTHY_RUL_FLOOR). The
-        # supervised RUL head that once needed the late "decay" cycles was
-        # removed from the sim (commit 9747bb2); feeding near-failure cycles
-        # now would teach the USAD model that degradation is "normal", which
-        # both desensitises detection and contradicts the product pitch.
-        sequence: list[dict] = []
-        for unit_id in train_unit_ids:
-            unit_df = self._dataset.train_units[unit_id]
-            for _, row in unit_df.iterrows():
-                if len(sequence) >= requested:
-                    break
-                if float(row["rul"]) <= self.HEALTHY_RUL_FLOOR:
-                    continue  # skip near-failure cycles — not a healthy baseline
-                sequence.append({
-                    "unit_id": int(unit_id),
-                    "cycle": int(row["cycle"]),
-                    "features": row[feature_cols].to_numpy(dtype=np.float32),
-                    "rul": float(row["rul"]),
-                    "phase": "train",
-                })
-            if len(sequence) >= requested:
-                break
-        self._calib_end = len(sequence)
-
-        # Pick three test units by approximate end-of-sequence RUL so the
-        # demo shows one healthy, one mid-life, and one near-failure engine.
-        test_units = sorted(self._dataset.test_units.keys())
-        end_rul = {
-            uid: float(self._dataset.test_units[uid]["rul"].iloc[-1])
-            for uid in test_units
-        }
-        chosen: list[int] = []
-        for target_rul in (15, 60, 100):
-            best = min(test_units, key=lambda uid: abs(end_rul[uid] - target_rul))
-            if best not in chosen:
-                chosen.append(best)
-        for unit_id in chosen:
-            unit_df = self._dataset.test_units[unit_id]
-            for _, row in unit_df.iterrows():
-                sequence.append({
-                    "unit_id": int(unit_id),
-                    "cycle": int(row["cycle"]),
-                    "features": row[feature_cols].to_numpy(dtype=np.float32),
-                    "rul": float(row["rul"]),
-                    "phase": "test",
-                })
-        self._sequence = sequence
-        self._loaded = True
-
-    async def stream(
-        self,
-        get_speed: Callable[[], float],
-        consume_seek: Callable[[], int | None],
-        stop: asyncio.Event,
-        pause: asyncio.Event,
-    ) -> AsyncIterator[SensorEvent]:
-        self._ensure_loaded()
-        feature_names = self.spec.feature_names
-        n_events = len(self._sequence)
-
-        idx = 0
-        jumped = False
-        while idx < n_events:
-            if stop.is_set():
-                return
-            if pause.is_set():
-                while pause.is_set() and not stop.is_set():
-                    await asyncio.sleep(0.05)
-                if stop.is_set():
-                    return
-
-            seek_target = consume_seek()
-            if seek_target is not None:
-                idx = max(0, min(int(seek_target), n_events - 1))
-                jumped = True
-
-            sample = self._sequence[idx]
-            features_arr = sample["features"]  # (F,)
-            features = {name: float(features_arr[i]) for i, name in enumerate(feature_names)}
-            metadata = {
-                "row_index": int(idx),
-                "unit_id": sample["unit_id"],
-                "unit_cycle": sample["cycle"],
-                "true_rul": sample["rul"],
-                "phase_kind": sample["phase"],
-            }
-            if jumped:
-                metadata["jumped"] = True
-                jumped = False
-            event_ts = datetime(2024, 1, 1) + pd.Timedelta(seconds=idx * self.SECONDS_PER_CYCLE)
-            yield SensorEvent(
-                timestamp=event_ts,
-                index=idx,
-                elapsed_simulated_seconds=idx * float(self.SECONDS_PER_CYCLE),
-                features=features,
-                cycle_features=features_arr.reshape(1, -1),
-                metadata=metadata,
-            )
-
-            speed = max(get_speed(), 1e-6)
-            await asyncio.sleep(max(self.SECONDS_PER_CYCLE / speed, 0.0))
-            idx += 1
-
-    def failure_markers(self) -> list[FailureMarker]:
-        self._ensure_loaded()
-        markers: list[FailureMarker] = []
-        # For each test unit in the stream, find its last 30 cycles (= near-failure window).
-        per_unit: dict[int, list[int]] = {}
-        for stream_idx, sample in enumerate(self._sequence):
-            if sample["phase"] == "test":
-                per_unit.setdefault(sample["unit_id"], []).append(stream_idx)
-        marker_id = 1
-        for unit_id, stream_indices in per_unit.items():
-            if len(stream_indices) < 30:
-                continue
-            # Land 30 cycles before the end so the window covers near-failure cycles.
-            jump_index = stream_indices[max(0, len(stream_indices) - 30)]
-            start_index = stream_indices[-1]
-            last_rul = self._sequence[start_index]["rul"]
-            markers.append(
-                FailureMarker(
-                    id=marker_id,
-                    label=f"#{marker_id} unit {unit_id} — final 30 cycles (RUL ≈ {last_rul:.0f})",
-                    failure_type="turbofan degradation",
-                    severity=f"end-of-test RUL = {last_rul:.0f} cycles",
-                    source="cmapss_test_unit",
-                    start_time=f"stream idx {start_index}",
-                    end_time=f"stream idx {start_index}",
-                    start_index=start_index,
-                    jump_index=jump_index,
-                )
-            )
-            marker_id += 1
-        return markers
-
-
 def get_source(name: str, calibration_size: int | None = None) -> DataSource:
     name = name.lower()
     if name in ("metropt", "metro_pt", "metro.pt"):
         return MetroPTSource()
     if name == "hydraulic":
         return HydraulicSource(calibration_size=calibration_size)
-    if name == "cmapss":
-        return CMAPSSSource(calibration_size=calibration_size)
     raise ValueError(f"Unknown data source: {name}")
 
 
@@ -852,7 +570,6 @@ def list_available_sources() -> list[dict[str, Any]]:
             "name": "metropt",
             "display_name": "Metro do Porto compressor",
             "available": "true",
-            "output_kind": "anomaly",
             "suggested_calibration": 60000,
             "natural_unit": "samples",
         },
@@ -860,19 +577,7 @@ def list_available_sources() -> list[dict[str, Any]]:
             "name": "hydraulic",
             "display_name": "UCI Hydraulic Systems (cooler fault)",
             "available": "true",
-            "output_kind": "anomaly",
             "suggested_calibration": 200,
             "natural_unit": "cycles",
-        },
-        {
-            "name": "cmapss",
-            "display_name": "NASA CMAPSS turbofan",
-            "available": "true",
-            "output_kind": "anomaly",
-            "suggested_calibration": 1500,
-            "natural_unit": "cycles",
-            "cycle_label": "flight cycle",
-            "hours_per_cycle": 6.0,
-            "simulated_to_asset_seconds": 720.0,
         },
     ]

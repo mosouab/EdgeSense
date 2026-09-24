@@ -36,7 +36,7 @@ PROXY_DISCLAIMER = "Pi-class proxy: 1 CPU core, 512 MB — not measured on physi
 # the warm-start commit (see docs/EDGE_BENCHMARK.md). Used as a labeled constant;
 # pass --include-training to re-measure calibrate->train + one recalibrate here.
 STARTUP_COLD_S = 75.0
-ALL_SOURCES = ("metropt", "hydraulic", "cmapss")
+ALL_SOURCES = ("metropt", "hydraulic")
 
 
 # ───────────────────────── host / memory helpers ─────────────────────────
@@ -235,19 +235,6 @@ def _eval_windows(source: str, spec, n: int, region: str = "eval") -> np.ndarray
         sel = w[:n] if region == "head" else w[max(0, len(w) - n):]
         return np.asarray(sel, dtype=np.float32)
 
-    if source == "cmapss":
-        from edgesense.datasets.cmapss import load_cmapss_fd001
-        ds = load_cmapss_fd001()
-        units = ds.train_units if region == "head" else ds.test_units
-        out: list[np.ndarray] = []
-        for uid in sorted(units, key=lambda u: -len(units[u])):
-            rows = units[uid][ds.feature_columns].to_numpy(np.float32)
-            if rows.shape[0] < wl:
-                continue
-            out.append(np.asarray(create_sliding_windows(rows, wl, stride).windows, dtype=np.float32))
-            if sum(len(o) for o in out) >= n:
-                break
-        return np.concatenate(out, axis=0)[:n]
 
     raise ValueError(f"unknown source {source}")
 
@@ -388,7 +375,7 @@ def benchmark_source(source: str, args, torch) -> dict:
     # headroom math — read window/stride/sample-rate from the source, never hardcode.
     cycle_based = spec.cycle_based
     if cycle_based:
-        sec_per_cycle = float(getattr(src, "SECONDS_PER_CYCLE", 1)) * float(getattr(spec, "simulated_to_asset_seconds", 1.0))
+        sec_per_cycle = float(getattr(src, "SECONDS_PER_CYCLE", 1))
         required_wps = 1.0 / sec_per_cycle
         rate_note = f"1 window/cycle; real cycle = {sec_per_cycle:.0f}s"
     else:
@@ -429,7 +416,7 @@ def benchmark_source(source: str, args, torch) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source", default=None, help="metropt|hydraulic|cmapss (default: all)")
+    ap.add_argument("--source", default=None, help="metropt|hydraulic (default: all)")
     ap.add_argument("--model", default="showcase", help="warm artifact name")
     ap.add_argument("--windows", type=int, default=2000)
     ap.add_argument("--warmup", type=int, default=100)

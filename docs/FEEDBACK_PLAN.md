@@ -46,7 +46,7 @@ Verified 2026-06-11 (several earlier "gotchas" are now stale — see end):
 class FeedbackRecord:
     feedback_id: str            # FB-<utc-iso-compact>
     episode_id: str             # the alert episode being judged
-    source: str                 # "metropt" | "hydraulic" | "cmapss"
+    source: str                 # "metropt" | "hydraulic"
     verdict: str                # "false_positive" | "confirmed"
     note: str
     created_at: str             # utc iso
@@ -122,7 +122,7 @@ async def get_feedback(source: str | None = None):
   ("Recorded — alert dismissed" / "Confirmed"), and let the next reading's
   `alert_level` (now OK after `force_release`) repaint the pill.
 
-**Verify Layer 1:** drive an alert (jump to a CMAPSS near-failure unit or a
+**Verify Layer 1:** drive an alert (jump to a Metro.PT failure or a
 Hydraulic fault), click "False positive" → pill returns to OK within one
 flush, and `reports/feedback/<source>.jsonl` gains exactly one row with the
 correct episode snapshot. Click "Confirm fault" on a separate episode →
@@ -251,7 +251,7 @@ Tuesday") rather than silently absorbing it into the model.
   move the published numbers, so gate it behind a metrics re-run.
 - **Inference buffers are trimmed to `window_length`** — Layer 2's episode
   capture needs its own ring buffer (above).
-- **Hydraulic / CMAPSS download on first use** (~80 / 10 MB); Metro.PT CSV
+- **Hydraulic dataset is fetched manually** (~80 MB); Metro.PT CSV
   ships in `data/` (1.5 M rows, no NaNs).
 - `reports/feedback/` and `reports/feedback/snapshots/` must be gitignored
   (runtime artefacts), like `reports/work_orders/`.

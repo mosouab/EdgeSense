@@ -18,8 +18,8 @@ import numpy as np  # noqa: E402
 
 PROXY = "Pi-class proxy: 1 CPU core, 512 MB — not measured on physical Pi hardware."
 HEADLINE = "dev-1core"           # the label used for single-environment charts
-SOURCE_ORDER = ["metropt", "hydraulic", "cmapss"]
-SOURCE_LABEL = {"metropt": "Metro.PT\ncompressor", "hydraulic": "Hydraulic\nrig", "cmapss": "CMAPSS\nturbofan"}
+SOURCE_ORDER = ["metropt", "hydraulic"]
+SOURCE_LABEL = {"metropt": "Metro.PT\ncompressor", "hydraulic": "Hydraulic\nrig"}
 ACCENT = "#0e7490"
 DPI = 150
 

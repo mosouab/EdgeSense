@@ -53,7 +53,6 @@ const MAX_TRACE = 240;
 const PRIMARY_CHANNELS = {
   metropt: ["TP2", "Oil_temperature", "Motor_current", "Reservoirs"],
   hydraulic: ["PS1", "TS1", "EPS1", "CE"],
-  cmapss: ["sensor_2", "sensor_3", "sensor_4", "sensor_7"],
 };
 const SPEED_OPTIONS = [
   { value: 1, label: "1× — real-time" },

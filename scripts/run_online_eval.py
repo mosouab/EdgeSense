@@ -11,7 +11,7 @@ when the operator dismisses the false-positive alerts, those windows join the
 healthy reference and the p99 threshold is refit.
 
 Hydraulic is the default because it streams a clean per-cycle binary label
-(`true_anomaly`); Metro.PT / CMAPSS don't stream window labels.
+(`true_anomaly`); Metro.PT doesn't stream window labels.
 
 Usage (server must be running: `uv run python scripts/run_simulation.py`):
     uv run python scripts/run_online_eval.py --source hydraulic --speed 5000 --calibration 200
@@ -197,7 +197,7 @@ def main() -> None:
         readings = asyncio.run(drive(args.source, args.speed, args.calibration))
         if not readings:
             print("No labelled inference readings collected — does this source stream "
-                  "`true_anomaly`? (Hydraulic does; CMAPSS doesn't.)")
+                  "`true_anomaly`? (Hydraulic does.)")
             return
         labels = np.array([int(r["true_anomaly"]) for r in readings], dtype=int)
 

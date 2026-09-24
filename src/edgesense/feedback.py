@@ -30,7 +30,7 @@ class FeedbackRecord:
 
     feedback_id: str          # FB-<utc-compact>, also the persisted filename stem
     episode_id: str           # the alert episode this verdict refers to
-    source: str               # "metropt" | "hydraulic" | "cmapss"
+    source: str               # "metropt" | "hydraulic"
     verdict: str              # "false_positive" | "confirmed"
     note: str
     created_at: str           # ISO 8601 UTC

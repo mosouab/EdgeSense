@@ -132,10 +132,6 @@ class EdgeDevice:
         self._above_streak: int = 0
         self._below_streak: int = 0
         self._warn_streak: int = 0
-        # For cycle sources with discrete assets (CMAPSS units): the asset id
-        # currently being streamed. When it changes during inference we reset
-        # the cycle buffer so windows never blend two different engines.
-        self._current_unit_id: Any = None
         # Alert-episode accumulator: a dict while an episode is active (score
         # elevated to warn/alert), else None. Finished episodes linger in
         # `_last_episode` briefly so feedback can reference them after release.
@@ -212,7 +208,6 @@ class EdgeDevice:
                 self._above_streak = 0
                 self._below_streak = 0
                 self._warn_streak = 0
-                self._current_unit_id = None
                 self._episode = None
                 self._last_episode = None
                 self._recent_windows.clear()
@@ -356,26 +351,6 @@ class EdgeDevice:
                 "Cycle-based source emitted an event without cycle_features."
             )
 
-        # During inference, a change of asset id (e.g. CMAPSS test engine #1 ->
-        # #2) means the buffered tail belongs to a different machine. Clear the
-        # window buffer and per-asset state so we never score a window that
-        # blends two engines, and so the trend forecast restarts per asset.
-        # During calibration we deliberately accumulate all train units.
-        unit_id = event.metadata.get("unit_id")
-        if (
-            self._phase.name == "inferring"
-            and unit_id is not None
-            and unit_id != self._current_unit_id
-        ):
-            self._cycle_buffer.clear()
-            self._rolling_scores = []
-            self._rolling_contributions = []
-            self._forecast_buffer = []
-            self._last_forecast = None
-            self._recent_windows.clear()
-        if unit_id is not None:
-            self._current_unit_id = unit_id
-
         self._cycle_buffer.append(event.cycle_features)
         count = len(self._cycle_buffer)
         phase_name = self._phase.name
@@ -400,10 +375,8 @@ class EdgeDevice:
             await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="training")
 
         elif phase_name == "inferring":
-            # Keep the cycle buffer bounded — at most `window_length` cycles
-            # are needed to assemble the current window.
-            if len(self._cycle_buffer) > window_length:
-                del self._cycle_buffer[:-window_length]
+            # Each cycle is one window, so inference only needs the latest cycle.
+            del self._cycle_buffer[:-1]
             window = self._extract_cycle_window(self._cycle_buffer, window_length)
             if window is None or self._scaler is None or self._model is None:
                 await self._publish_reading(event, score=None, health=100.0, alert_level="ok", phase="inferring")
@@ -434,8 +407,6 @@ class EdgeDevice:
                 phase="inferring",
                 extra={
                     "true_anomaly": event.metadata.get("is_anomaly"),
-                    "unit_id": event.metadata.get("unit_id"),
-                    "unit_cycle": event.metadata.get("unit_cycle"),
                     "contributors": contributors,
                     "forecast": forecast,
                     "diagnosis": diagnosis,
@@ -1224,17 +1195,14 @@ class EdgeDevice:
         The forecast is label-free: we fit a linear regression to recent
         (asset_seconds, smoothed_score) samples, compute slope + standard
         error, and project to when the line crosses `self._threshold`. The
-        method that actually runs on a real edge device — no fleet RUL data
-        needed.
+        method that actually runs on a real edge device — no labelled failure
+        history needed.
         """
 
         if self._threshold is None:
             return None
 
-        ratio = float(
-            getattr(self.source.spec, "simulated_to_asset_seconds", 1.0) or 1.0
-        )
-        asset_seconds = float(event.elapsed_simulated_seconds) * ratio
+        asset_seconds = float(event.elapsed_simulated_seconds)
 
         # Drop very-recent duplicates from a paused stream to avoid biasing
         # the slope (timestamps don't advance while pause_event is set).
@@ -1387,9 +1355,7 @@ class EdgeDevice:
         cycles: list[np.ndarray],
         window_length: int,
     ) -> None:
-        """Cycle-based training: each cycle is one window for Hydraulic; for
-        CMAPSS we concatenate cycles and slide a `window_length`-cycle window.
-        """
+        """Cycle-based training: each cycle is one training window (Hydraulic)."""
 
         flat = np.concatenate(cycles, axis=0).astype(np.float32)
         scaler = StandardScaler().fit(flat)
@@ -1403,26 +1369,14 @@ class EdgeDevice:
             scaled_cycles.append(scaled_flat[offset : offset + n])
             offset += n
 
-        # If each cycle is already at least window_length long, treat each
-        # cycle as a single training window (Hydraulic). Otherwise concatenate
-        # everything and slide a window across (CMAPSS).
-        if scaled_cycles[0].shape[0] >= window_length:
-            windows = np.stack(
-                [c[-window_length:] for c in scaled_cycles], axis=0
-            ).astype(np.float32)
-        else:
-            num_windows = scaled_flat.shape[0] - window_length + 1
-            if num_windows < _MIN_CALIBRATION_WINDOWS:
-                raise ValueError(
-                    f"Not enough calibration cycles for window_length={window_length}"
-                    f" (got {scaled_flat.shape[0]} cycle-rows -> {num_windows} "
-                    f"windows; need at least {_MIN_CALIBRATION_WINDOWS}). "
-                    f"Increase the calibration cycle count."
-                )
-            windows = np.stack(
-                [scaled_flat[i : i + window_length] for i in range(num_windows)],
-                axis=0,
-            ).astype(np.float32)
+        if scaled_cycles[0].shape[0] < window_length:
+            raise ValueError(
+                f"Cycles have {scaled_cycles[0].shape[0]} rows; need at least "
+                f"window_length={window_length}."
+            )
+        windows = np.stack(
+            [c[-window_length:] for c in scaled_cycles], axis=0
+        ).astype(np.float32)
 
         seed_all(self.cfg.seed)
         cfg_model = USADConv1dConfig(
@@ -1490,26 +1444,11 @@ class EdgeDevice:
     def _extract_cycle_window(
         self, cycle_buffer: list[np.ndarray], window_length: int
     ) -> np.ndarray | None:
-        """Build a (window_length, F) window from the buffer's tail."""
+        """Return the latest cycle's last `window_length` rows as the window."""
 
-        if not cycle_buffer:
+        if not cycle_buffer or cycle_buffer[-1].shape[0] < window_length:
             return None
-        last = cycle_buffer[-1]
-        if last.shape[0] >= window_length:
-            return last[-window_length:]
-        # Concatenate the most-recent cycles until total rows >= window_length.
-        total = 0
-        pieces: list[np.ndarray] = []
-        for arr in reversed(cycle_buffer):
-            pieces.append(arr)
-            total += arr.shape[0]
-            if total >= window_length:
-                break
-        if total < window_length:
-            return None
-        pieces.reverse()
-        concat = np.concatenate(pieces, axis=0)
-        return concat[-window_length:]
+        return cycle_buffer[-1][-window_length:]
 
     async def _score_cycle_window(
         self, window_raw: np.ndarray, feature_names: list[str]

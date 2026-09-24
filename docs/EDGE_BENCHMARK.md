@@ -45,10 +45,13 @@ overwrites another label's entry). Charts → `reports/edge_benchmark/*.png`.
 ## Host (this capture)
 
 `13th Gen Intel Core i7-1355U`, 15.3 GB RAM, Linux 6.17, PyTorch 2.12.0.
-Hydraulic and CMAPSS had no showcase artifact in this run, so they were
+Hydraulic had no showcase artifact in this run, so it was
 `trained_fresh` (same architecture → same latency; provenance is labeled).
 
 ## Captured run — `dev-1core` (taskset -c 0, torch threads = 1)
+
+This run also benchmarked CMAPSS, which has since been removed from the
+project; its block is omitted here and from `metrics.json`.
 
 ```
 label=dev-1core  threads=1  windows=2000  torch_baseline_rss=458MB
@@ -69,14 +72,6 @@ clean inference-process RSS (torch + model + 1 window, no datasets): 558 MB
     timing 2000 windows (after 100 warmup)…
     total p50=0.4812ms p99=0.7988ms | 1964 win/s vs 0.017 required -> 117,829x (117,829 assets/core)
 
-=== cmapss ===
-  [cmapss] loading model…
-    origin=trained_fresh  rss_delta=35.9 MB
-    no patterns in artifact -> registered 1 synthetic benign pattern
-    parity check: max|Δscore| = 1.19e-07  -> PASS
-    timing 2000 windows (after 100 warmup)…
-    total p50=0.4417ms p99=0.9129ms | 2032 win/s vs 4.6e-05 required -> 43,889,472x (43,889,472 assets/core)
-
 Wrote reports/edge_benchmark/metrics.json
 Rendered charts to reports/edge_benchmark
 ```
@@ -87,7 +82,6 @@ Rendered charts to reports/edge_benchmark
 |---|---|---|---|---|---|---|
 | Metro.PT compressor | 0.558 ms | 0.987 ms | 1681 win/s | 0.002 win/s | 840,630× | 840,630 |
 | Hydraulic rig | 0.481 ms | 0.799 ms | 1964 win/s | 0.0167 win/s | 117,829× | 117,829 |
-| CMAPSS turbofan | 0.442 ms | 0.913 ms | 2032 win/s | 0.0000463 win/s | 43,889,472× | 43,889,472 |
 
 Model: ~41.5k parameters, **0.166 MB** fp32. Warm start **2.13 s** vs ~75 s cold
 (~35×). Stage means (Metro.PT): preprocess 0.087 ms, forward 0.384 ms,
@@ -108,8 +102,8 @@ The numbers look absurd because the assets are slow. Metro.PT samples once every
 headroom = 1681 / (1/500) = 1681 × 500 = 840,630×
 ```
 
-CMAPSS is per-cycle and a real flight cycle is ~6 h (21,600 s), so one window is
-required every 21,600 s (4.63e-5 win/s); 2032 win/s ÷ 4.63e-5 ≈ **43.9 M×**.
+Hydraulic is per-cycle and a cycle is 60 s, so one window is required every
+60 s (0.0167 win/s); 1964 win/s × 60 ≈ **118 k×**.
 These are not GPU numbers or batched throughput — single process, one window at a
 time, full pipeline including attribution + Layer-3 latent match. Verified twice;
 kept as measured.

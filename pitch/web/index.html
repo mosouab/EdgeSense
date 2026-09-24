@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EdgeSense · Pitch JITT</title>
+<meta name="description" content="EdgeSense : la maintenance prédictive qui se branche sur les automates existants. Pitch de 3 minutes, programme Think It &amp; Do It.">
+<link rel="stylesheet" href="deck.css">
+</head>
+<body>
+
+<!-- Icons: Lucide v0.460.0 (ISC License, fonts/LICENSE-Lucide.txt) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+    <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5"/> <path d="M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7"/> <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/> <path d="m2 2 20 20"/></symbol>
+    <symbol id="i-clipboard-list" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/> <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/> <path d="M12 11h4"/> <path d="M12 16h4"/> <path d="M8 11h.01"/> <path d="M8 16h.01"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><circle cx="8" cy="8" r="6"/> <path d="M18.09 10.37A6 6 0 1 1 10.34 18"/> <path d="M7 6h1v4"/> <path d="m16.71 13.88.7.71-2.82 2.82"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect width="16" height="16" x="4" y="4" rx="2"/> <rect width="6" height="6" x="9" y="9" rx="1"/> <path d="M15 2v2"/> <path d="M15 20v2"/> <path d="M2 15h2"/> <path d="M2 9h2"/> <path d="M20 15h2"/> <path d="M20 9h2"/> <path d="M9 2v2"/> <path d="M9 20v2"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/> <path d="M17 18h1"/> <path d="M12 18h1"/> <path d="M7 18h1"/></symbol>
+    <symbol id="i-graduation-cap" viewBox="0 0 24 24"><path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z"/> <path d="M22 10v6"/> <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5"/></symbol>
+    <symbol id="i-hard-hat" viewBox="0 0 24 24"><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5"/> <path d="M14 6a6 6 0 0 1 6 6v3"/> <path d="M4 15v-3a6 6 0 0 1 6-6"/> <rect x="2" y="15" width="20" height="4" rx="1"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/> <path d="M3 3v5h5"/> <path d="M12 7v5l4 2"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/> <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/> <line x1="8" x2="16" y1="21" y2="21"/> <line x1="12" x2="12" y1="17" y2="21"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/> <rect width="20" height="8" x="2" y="14" rx="2" ry="2"/> <line x1="6" x2="6.01" y1="6" y2="6"/> <line x1="6" x2="6.01" y1="18" y2="18"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/> <path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-user-check" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/> <circle cx="9" cy="7" r="4"/> <polyline points="16 11 18 13 22 9"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  </defs>
+</svg>
+
+<main class="deck" id="deck">
+
+  <!-- 1 · TITRE ============================================================ -->
+  <section class="slide slide--cover" data-label="Titre" data-duration="10">
+    <svg class="cover-trace" viewBox="0 0 1920 906" aria-hidden="true">
+      <path class="envelope" d=""/>
+      <path class="envelope-edge" d=""/>
+      <path class="trace" d=""/>
+      <g class="flag-g">
+        <circle class="flag" r="26"/>
+        <circle class="flag-dot" r="8"/>
+        <text class="flag-label">DÉRIVE DÉTECTÉE</text>
+      </g>
+    </svg>
+    <div class="cover">
+      <p class="eyebrow" data-reveal style="--d:0">Maintenance prédictive · IA embarquée</p>
+      <h1 class="cover-title" data-reveal style="--d:1">Edge<span>Sense</span></h1>
+      <p class="cover-sub" data-reveal style="--d:2">La maintenance prédictive qui se branche sur les automates existants</p>
+    </div>
+    <div class="cover-meta" data-reveal style="--d:3">
+      <p><span class="k">Équipe projet&nbsp;: </span><span class="fill-me">Prénom NOM</span></p>
+      <p><span class="k">Tuteur&nbsp;: </span><span class="fill-me">Prénom NOM</span></p>
+    </div>
+    <aside class="notes" data-time="0:00 → 0:10">
+      <p>Bonjour. Je m’appelle [Prénom], et je vous présente EdgeSense&nbsp;: la maintenance prédictive qui se branche directement sur les automates d’une usine.</p>
+    </aside>
+  </section>
+
+  <!-- 2 · ACCROCHE ========================================================= -->
+  <section class="slide" data-label="Accroche" data-duration="25">
+    <header class="slide-head">
+      <p class="eyebrow" data-reveal style="--d:0">Point de départ · stage chez Groupe Bel, Maroc</p>
+      <h2 data-reveal style="--d:1">Les données étaient là. Personne ne s’en servait pour anticiper les pannes.</h2>
+    </header>
+    <div class="flow">
+      <div class="flow-step" data-reveal style="--d:2">
+        <svg class="ico"><use href="#i-cpu"/></svg>
+        <h3>Machines &amp; automates</h3>
+        <p>chaque ligne remonte ses mesures</p>
+      </div>
+      <div class="flow-arrow" data-reveal style="--d:2.5"><svg class="ico"><use href="#i-arrow"/></svg></div>
+      <div class="flow-step" data-reveal style="--d:3">
+        <svg class="ico"><use href="#i-server"/></svg>
+        <h3>Serveur central</h3>
+        <p>outils Siemens, tout est stocké</p>
+      </div>
+      <div class="flow-arrow" data-reveal style="--d:3.5"><svg class="ico"><use href="#i-arrow"/></svg></div>
+      <div class="flow-step" data-reveal style="--d:4">
+        <svg class="ico"><use href="#i-monitor"/></svg>
+        <h3>Écrans de supervision</h3>
+        <p>tout est visualisé</p>
+      </div>
+      <div class="flow-arrow" data-reveal style="--d:4.5"><svg class="ico"><use href="#i-arrow"/></svg></div>
+      <div class="flow-step flow-step--gap" data-reveal style="--d:5.5">
+        <svg class="ico"><use href="#i-bell-off"/></svg>
+        <h3>Et ensuite&nbsp;?</h3>
+        <p>aucune détection, aucune alerte, aucune intervention anticipée</p>
+      </div>
+    </div>
+    <p class="story-foot" data-reveal style="--d:6.5">Des tableaux de bord, mais <b>la maintenance restait réactive</b>&nbsp;: rien ne transformait ces données en action pour le technicien.</p>
+    <aside class="notes" data-time="0:10 → 0:35">
+      <p>Tout part de mon stage chez Groupe Bel, au Maroc. L’usine avait centralisé les données de ses machines et de ses automates sur un serveur, avec les outils Siemens.</p>
+      <p>Mais ces données servaient seulement à afficher des courbes. Aucune alerte, aucune intervention anticipée. Les données étaient là&nbsp;; personne ne pouvait s’en servir pour prévenir les pannes.</p>
+    </aside>
+  </section>
+
+  <!-- 3 · CONTEXTE & PROBLÉMATIQUE ======================================== -->
+  <section class="slide" data-label="Contexte &amp; Problématique" data-duration="30">
+    <h2 class="slide-title" data-reveal style="--d:0">Contexte &amp; Problématique</h2>
+    <div class="col-left">
+      <ul class="bullets">
+        <li data-reveal style="--d:1"><b>Le problème&nbsp;:</b> la maintenance prédictive existe, mais elle est pensée pour les grands groupes&nbsp;: capteurs dédiés, serveurs, cloud, équipe data.</li>
+        <li data-reveal style="--d:2"><b>Public cible&nbsp;:</b> les usines de taille moyenne (PME, ETI, agroalimentaire…) où la maintenance repose sur des techniciens et des automaticiens.</li>
+        <li data-reveal style="--d:3"><b>L’enjeu&nbsp;:</b> une panne imprévue arrête la ligne, alors que les signaux pour l’anticiper sont déjà dans les automates.</li>
+      </ul>
+    </div>
+    <figure class="map-card" data-reveal style="--d:2">
+      <figcaption class="eyebrow">Qui peut s’offrir la maintenance prédictive&nbsp;?</figcaption>
+      <svg viewBox="0 0 684 610" role="img" aria-label="Carte de positionnement : Augury et Amiral Technologies demandent budget et compétences data ; EdgeSense vise les usines sans équipe data.">
+        <defs>
+          <marker id="ax-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#3f5b78"/>
+          </marker>
+        </defs>
+                <rect class="map-zone" x="70" y="372" width="336" height="168" rx="10"/>
+        <text class="map-zone-label" x="88" y="400">USINES DE TAILLE MOYENNE</text>
+        <path class="map-axis" d="M70 540 H662" marker-end="url(#ax-head)"/>
+        <path class="map-axis" d="M70 540 V18" marker-end="url(#ax-head)"/>
+        <text class="map-axis-label" x="70" y="578">Budget &amp; infrastructure à déployer</text>
+        <text class="map-axis-label" x="662" y="604" text-anchor="end" style="text-transform:none">faible ─── élevé</text>
+        <text class="map-axis-label" transform="translate(40 540) rotate(-90)" x="0" y="0">Compétences data nécessaires</text>
+
+        <circle class="map-peer" cx="542" cy="98" r="15"/>
+        <text class="map-name" x="518" y="92" text-anchor="end">Amiral Technologies</text>
+        <text class="map-sub" x="518" y="120" text-anchor="end">serveurs + experts pour analyser</text>
+
+        <circle class="map-peer" cx="601" cy="296" r="15"/>
+        <text class="map-name" x="577" y="290" text-anchor="end">Augury</text>
+        <text class="map-sub" x="577" y="318" text-anchor="end">capteurs dédiés,</text>
+        <text class="map-sub" x="577" y="342" text-anchor="end">analyse chez le fournisseur</text>
+
+        <circle class="map-me-ring" cx="146" cy="466" r="17"/>
+        <circle class="map-me" cx="146" cy="466" r="17"/>
+        <text class="map-name map-name--me" x="176" y="462">EdgeSense</text>
+        <text class="map-sub" x="176" y="490">automates existants,</text>
+        <text class="map-sub" x="176" y="514">sans équipe data</text>
+      </svg>
+      <p class="map-note">Positionnement indicatif</p>
+    </figure>
+    <aside class="notes" data-time="0:35 → 1:05">
+      <p>Et ce n’est pas un cas isolé. Les solutions de maintenance prédictive existent, mais elles visent les grands groupes. Augury installe ses propres capteurs et analyse les données chez lui. Amiral Technologies, issue du CNRS, demande des serveurs et des experts pour exploiter les analyses.</p>
+      <p>Les usines de taille moyenne ont des techniciens de maintenance et des automaticiens, mais ni équipe data ni ce budget. C’est ce marché que je vise.</p>
+    </aside>
+  </section>
+
+  <!-- 4 · CONCEPT =========================================================== -->
+  <section class="slide" data-label="Concept" data-duration="30">
+    <h2 class="slide-title" data-reveal style="--d:0">Concept</h2>
+    <p class="lead concept-lead" data-reveal style="--d:1">Un boîtier installé sur site, <strong>branché sur les automates existants</strong>, qui prévient le technicien <strong>avant</strong> la panne.</p>
+    <div class="pipeline" data-reveal style="--d:2">
+      <svg viewBox="0 0 1628 420" aria-hidden="true">
+        <line class="pipe-line" x1="162.8" y1="179" x2="1465.2" y2="179"/>
+        <path class="pipe-loop" d="M1465.2 116 C1465.2 22 488.4 22 488.4 86"/>
+        <path class="pipe-loop-head" d="M476 84 L500.8 84 L488.4 102 Z"/>
+        <g class="pulse">
+          <circle r="9" fill="#4a95ac">
+            <animateMotion dur="4.8s" repeatCount="indefinite" path="M162.8 179 H1465.2"/>
+            <animate attributeName="fill" dur="4.8s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.25" values="#4a95ac;#d47d16"/>
+          </circle>
+          <circle r="9" fill="#4a95ac">
+            <animateMotion dur="4.8s" begin="2.4s" repeatCount="indefinite" path="M162.8 179 H1465.2"/>
+            <animate attributeName="fill" dur="4.8s" begin="2.4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.25" values="#4a95ac;#d47d16"/>
+          </circle>
+        </g>
+      </svg>
+      <p class="loop-label">le technicien confirme ou rejette&nbsp;: EdgeSense apprend</p>
+      <div class="stations">
+        <div class="station">
+          <div class="badge"><svg class="ico"><use href="#i-cpu"/></svg></div>
+          <h3>Automates &amp; SCADA</h3>
+          <p>les données déjà présentes dans l’usine</p>
+        </div>
+        <div class="station">
+          <div class="badge badge--core"><svg class="ico"><use href="#i-activity"/></svg><small>EDGESENSE</small></div>
+          <h3>Boîtier sur site</h3>
+          <p>apprend le fonctionnement normal, détecte les dérives</p>
+        </div>
+        <div class="station">
+          <div class="badge"><svg class="ico"><use href="#i-monitor"/></svg></div>
+          <h3>IHM de l’atelier</h3>
+          <p>alerte + cause probable</p>
+        </div>
+        <div class="station">
+          <div class="badge"><svg class="ico"><use href="#i-clipboard-list"/></svg></div>
+          <h3>GMAO</h3>
+          <p>ticket d’intervention pré-rempli</p>
+        </div>
+        <div class="station">
+          <div class="badge"><svg class="ico"><use href="#i-hard-hat"/></svg></div>
+          <h3>Technicien</h3>
+          <p>intervient avant la panne</p>
+        </div>
+      </div>
+    </div>
+    <div class="assets">
+      <div class="asset" data-reveal style="--d:4">
+        <svg class="ico"><use href="#i-history"/></svg>
+        <div><h3>Aucun historique de pannes</h3><p>apprentissage non supervisé sur les données saines</p></div>
+      </div>
+      <div class="asset" data-reveal style="--d:5">
+        <svg class="ico"><use href="#i-shield-check"/></svg>
+        <div><h3>100&nbsp;% sur site</h3><p>aucune donnée brute ne quitte l’usine</p></div>
+      </div>
+      <div class="asset" data-reveal style="--d:6">
+        <svg class="ico"><use href="#i-user-check"/></svg>
+        <div><h3>Pensé pour le technicien</h3><p>où regarder, quoi faire, et il garde la main</p></div>
+      </div>
+    </div>
+    <aside class="notes" data-time="1:05 → 1:35">
+      <p>EdgeSense, c’est un boîtier installé dans l’usine et branché sur les automates existants. Il apprend le fonctionnement normal de chaque machine, sans historique de pannes.</p>
+      <p>Dès qu’une dérive apparaît, il affiche une alerte sur l’IHM que les opérateurs utilisent déjà, avec la cause probable, et crée le ticket dans la GMAO. Le technicien confirme ou rejette l’alerte, et le système apprend de ce retour.</p>
+    </aside>
+  </section>
+
+  <!-- 5 · FAISABILITÉ ======================================================= -->
+  <section class="slide" data-label="Faisabilité" data-duration="35">
+    <h2 class="slide-title" data-reveal style="--d:0">Faisabilité&nbsp;: le prototype fonctionne</h2>
+    <figure class="proof-shot" data-reveal style="--d:1">
+      <figcaption class="eyebrow">Console opérateur EdgeSense · alerte sur une panne réelle (données rejouées)</figcaption>
+      <div class="screen">
+        <img src="assets/dashboard-alert-top.webp" width="3200" height="1780" alt="Console EdgeSense en alerte : écart localisé sur la pression de la vanne de régulation, action recommandée, bouton de création d'une demande d'intervention.">
+        <span class="pin" style="left:37%;top:33%">1</span>
+        <span class="pin" style="left:89.5%;top:29.7%">2</span>
+        <span class="pin" style="left:65%;top:41.5%">3</span>
+      </div>
+      <div class="pins-legend">
+        <span><i>1</i>cause probable localisée</span>
+        <span><i>2</i>action recommandée</span>
+        <span><i>3</i>ticket GMAO en un clic</span>
+      </div>
+    </figure>
+    <div class="stats">
+      <div class="stat" data-reveal style="--d:2">
+        <div class="stat-num">4<small> / 4</small></div>
+        <div class="stat-label">pannes documentées détectées</div>
+        <div class="stat-ctx">compresseur du métro de Porto<br>139 jours de données réelles</div>
+      </div>
+      <div class="stat" data-reveal style="--d:3">
+        <div class="stat-num">~10<small> jours</small></div>
+        <div class="stat-label">entre deux fausses alertes</div>
+        <div class="stat-ctx">en moyenne sur la même période<br>seuil calibré sur site</div>
+      </div>
+      <div class="stat" data-reveal style="--d:4">
+        <div class="stat-num">&lt;&thinsp;1<small> ms</small></div>
+        <div class="stat-label">par analyse, sur un seul cœur CPU</div>
+        <div class="stat-ctx">modèle de 0,17&nbsp;Mo · 41&nbsp;500 paramètres</div>
+      </div>
+    </div>
+    <div class="trl" data-reveal style="--d:5">
+      <div class="trl-scale" aria-label="Niveau de maturité technologique 4 sur 9">
+        <span class="on">1</span><span class="on">2</span><span class="on">3</span><span class="on">4</span><span class="next">5</span><span class="next">6</span><span>7</span><span>8</span><span>9</span>
+      </div>
+      <p class="trl-text"><b>TRL&nbsp;4</b>&nbsp;: prototype validé en laboratoire, sur données industrielles réelles</p>
+    </div>
+    <aside class="notes" data-time="1:35 → 2:10">
+      <p>Ce n’est pas qu’une idée&nbsp;: le prototype fonctionne. Voici la console opérateur, en alerte sur une vraie panne du compresseur du métro de Porto. Elle localise la cause, propose l’action et crée le ticket en un clic.</p>
+      <p>Sur 139 jours de données réelles, EdgeSense a signalé les 4 pannes documentées, avec en moyenne une fausse alerte tous les dix jours environ. Et une analyse prend moins d’une milliseconde sur un seul cœur de processeur&nbsp;: un petit boîtier suffit. Nous sommes au TRL 4.</p>
+    </aside>
+  </section>
+
+  <!-- 6 · IMPACT ============================================================ -->
+  <section class="slide" data-label="Impact" data-duration="25">
+    <h2 class="slide-title" data-reveal style="--d:0">Impact</h2>
+    <div class="impact">
+      <article class="impact-card" data-reveal style="--d:1">
+        <header><svg class="ico"><use href="#i-factory"/></svg><h3>Pour l’usine</h3></header>
+        <ul>
+          <li><b>Moins d’arrêts imprévus</b>&nbsp;: on intervient avant la panne, sur un créneau planifié.</li>
+          <li><b>Aucune nouvelle infrastructure</b>&nbsp;: on valorise les données déjà collectées.</li>
+        </ul>
+      </article>
+      <article class="impact-card" data-reveal style="--d:2">
+        <header><svg class="ico"><use href="#i-wrench"/></svg><h3>Pour le technicien</h3></header>
+        <ul>
+          <li><b>Un assistant, pas une boîte noire</b>&nbsp;: il sait où regarder et quoi faire.</li>
+          <li><b>Son expertise compte</b>&nbsp;: chaque retour terrain améliore le système.</li>
+        </ul>
+      </article>
+      <article class="impact-card" data-reveal style="--d:3">
+        <header><svg class="ico"><use href="#i-leaf"/></svg><h3>Pour la société</h3></header>
+        <ul>
+          <li><b>Moins de gaspillage</b>&nbsp;: matière perdue lors des arrêts, énergie perdue par les fuites d’air comprimé.</li>
+          <li><b>Données souveraines</b>&nbsp;: tout reste dans l’usine.</li>
+        </ul>
+      </article>
+    </div>
+    <div class="biz" data-reveal style="--d:4">
+      <div><span class="eyebrow">Qui paie&nbsp;?</span>Le responsable maintenance ou le directeur d’usine</div>
+      <div><span class="eyebrow">Modèle envisagé</span>Un boîtier + un abonnement par machine surveillée</div>
+    </div>
+    <aside class="notes" data-time="2:10 → 2:35">
+      <p>L’impact&nbsp;: pour l’usine, moins d’arrêts imprévus et des interventions planifiées, sans nouvelle infrastructure. Pour le technicien, un outil qui lui dit où regarder et quoi faire.</p>
+      <p>Et plus largement, moins de pertes de matière et d’énergie, avec des données qui restent sur site. Le modèle envisagé&nbsp;: un boîtier et un abonnement par machine surveillée.</p>
+    </aside>
+  </section>
+
+  <!-- 7 · CONCLUSION + BESOIN ============================================== -->
+  <section class="slide" data-label="Conclusion + besoin" data-duration="20">
+    <h2 class="slide-title" data-reveal style="--d:0">Prochaines étapes &amp; besoins</h2>
+    <div class="steps">
+      <span class="steps-now" data-reveal style="--d:1">Aujourd’hui · TRL 4</span>
+      <ol>
+        <li data-n="1" data-reveal style="--d:2"><h3>Connecter de vrais automates</h3><p>OPC UA, Siemens S7&nbsp;: lire en direct une ligne réelle</p></li>
+        <li data-n="2" data-reveal style="--d:3"><h3>Pilote en usine</h3><p>une ligne de production, avec une usine partenaire</p></li>
+        <li data-n="3" data-reveal style="--d:4"><h3>Boîtier embarqué</h3><p>portage sur matériel industriel basse consommation</p></li>
+      </ol>
+      <span class="steps-goal" data-reveal style="--d:5">Objectif · TRL 6, démonstration sur site</span>
+    </div>
+    <aside class="ask" data-reveal style="--d:3">
+      <p class="eyebrow">Ce que je recherche</p>
+      <h3>Pour passer au pilote</h3>
+      <ul>
+        <li><svg class="ico"><use href="#i-factory"/></svg><span><b>Une usine pilote</b><br>agroalimentaire ou process</span></li>
+        <li><svg class="ico"><use href="#i-graduation-cap"/></svg><span><b>Un accompagnement</b><br>incubation, mentorat business</span></li>
+        <li><svg class="ico"><use href="#i-coins"/></svg><span><b>Un premier financement</b><br>pour le matériel du pilote</span></li>
+      </ul>
+    </aside>
+    <p class="oneliner" data-reveal style="--d:6">EdgeSense&nbsp;: la maintenance prédictive à la portée des usines qui n’ont pas d’équipe data.</p>
+    <aside class="notes" data-time="2:35 → 2:55">
+      <p>Prochaines étapes&nbsp;: connecter de vrais automates, en OPC UA et Siemens S7&nbsp;; mener un pilote sur une ligne de production&nbsp;; puis porter le logiciel sur un boîtier industriel.</p>
+      <p>Pour cela, je recherche une usine pilote, un accompagnement et un premier financement pour le matériel.</p>
+    </aside>
+  </section>
+
+  <!-- 8 · MERCI ============================================================= -->
+  <section class="slide slide--cover" data-label="Merci" data-duration="5">
+    <div class="closing">
+      <h2 data-reveal style="--d:0">Merci de votre attention</h2>
+      <p class="tag" data-reveal style="--d:1">Think It &amp; Do It</p>
+      <p class="contact" data-reveal style="--d:2"><b>EdgeSense</b> · github.com/mosouab/EdgeSense</p>
+    </div>
+    <aside class="notes" data-time="2:55 → 3:00">
+      <p>EdgeSense&nbsp;: la maintenance prédictive pour les usines qui n’ont pas d’équipe data. Merci de votre attention.</p>
+      <p><em>Phrase-pitch (canevas «&nbsp;Oser pour innover&nbsp;»)&nbsp;: Saviez-vous que la plupart des usines de taille moyenne collectent déjà les données de leurs machines sans pouvoir s’en servir&nbsp;? Je développe EdgeSense, un boîtier qui se branche sur les automates existants, pour les équipes de maintenance, afin de détecter les pannes avant qu’elles n’arrivent, grâce à une IA qui apprend le fonctionnement normal sans historique de pannes et tourne entièrement sur site.</em></p>
+    </aside>
+  </section>
+
+</main>
+
+<div class="hud" id="hud"></div>
+<div class="blackout"></div>
+<div class="help" id="help">
+  <h4>Raccourcis</h4>
+  <div><kbd>→</kbd><kbd>Espace</kbd>diapo suivante</div>
+  <div><kbd>←</kbd>diapo précédente</div>
+  <div><kbd>F</kbd>plein écran</div>
+  <div><kbd>P</kbd>vue présentateur (notes + chrono)</div>
+  <div><kbd>B</kbd>écran noir</div>
+  <div><kbd>T</kbd>chrono marche / pause · <kbd>R</kbd>remise à zéro</div>
+  <div><kbd>H</kbd>afficher / masquer l’aide</div>
+</div>
+
+<script src="deck.js"></script>
+</body>
+</html>

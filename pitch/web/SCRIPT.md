@@ -101,6 +101,14 @@ Trois à cinq répétitions à voix haute suffisent, chrono lancé.
 
 ---
 
+## Phrase-pitch (60 à 90 s, canevas « Oser pour innover »)
+
+Pour un couloir, un networking ou si on vous demande « en une minute » :
+
+> Saviez-vous que chez Groupe Bel, au Maroc, les machines envoyaient leurs données vers un serveur central sans qu'aucune alerte n'en sorte ? Je développe EdgeSense, un boîtier qui se branche sur les automates existants, pour les équipes de maintenance des usines de taille moyenne. Il apprend le fonctionnement normal de chaque machine, sans historique de pannes, et prévient le technicien avant la panne. Tout tourne sur site. Je cherche une usine partenaire et un accompagnement pour lancer un pilote. Merci.
+
+---
+
 ## Questions probables du jury
 
 Réponses courtes, puis s'arrêter. Si on ne sait pas : « Je ne l'ai pas encore mesuré, c'est prévu dans le pilote. »
@@ -137,11 +145,3 @@ La combinaison : apprentissage sans historique de pannes, un modèle assez lége
 
 **« Vous êtes seul sur le projet ? »**
 [À compléter : équipe, compétences, qui vous cherchez à recruter.]
-
----
-
-## Phrase-pitch (60 à 90 s, canevas « Oser pour innover »)
-
-Pour un couloir, un networking ou si on vous demande « en une minute » :
-
-> Saviez-vous que chez Groupe Bel, au Maroc, les machines envoyaient leurs données vers un serveur central sans qu'aucune alerte n'en sorte ? Je développe EdgeSense, un boîtier qui se branche sur les automates existants, pour les équipes de maintenance des usines de taille moyenne. Il apprend le fonctionnement normal de chaque machine, sans historique de pannes, et prévient le technicien avant la panne. Tout tourne sur site. Je cherche une usine partenaire et un accompagnement pour lancer un pilote. Merci.

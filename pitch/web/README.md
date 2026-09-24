@@ -13,7 +13,12 @@ The speaker notes say "Je m'appelle [Prénom]" on slide 1 too.
 
 `SCRIPT.md` is the full spoken script in French (same words as the presenter-view notes), with
 click and gesture cues, the 7-idea structure to memorise, likely jury questions with answers, and
-the 60–90 s pitch phrase. Print it for rehearsal.
+the 60–90 s pitch phrase. `EdgeSense-script.pdf` is the printable A4 version (slide thumbnails next
+to each part). Rebuild it after editing `SCRIPT.md`:
+
+```
+uv run --no-project --with playwright --with markdown python pitch/web/script_pdf.py
+```
 
 ## Presenting
 

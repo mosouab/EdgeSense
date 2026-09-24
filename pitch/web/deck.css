@@ -324,7 +324,7 @@ body {
   color: var(--signal);
   white-space: nowrap;
 }
-.assets { position: absolute; left: 146px; right: 146px; top: 800px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.assets { position: absolute; left: 146px; right: 146px; top: 800px; display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 28px; }
 .asset {
   display: flex;
   gap: 20px;
@@ -337,6 +337,10 @@ body {
 .asset .ico { font-size: 40px; color: var(--blue); margin-top: 4px; }
 .asset h3 { font-size: 26px; line-height: 1.15; font-weight: 700; color: var(--blue); }
 .asset p { margin-top: 4px; font-size: 21px; line-height: 1.28; color: var(--ink-2); }
+.asset--key { background: var(--box); border-left-color: var(--stripe-4); }
+.asset--key .ico { color: var(--stripe-4); }
+.asset--key h3 { color: #fff; }
+.asset--key p { color: #cfe0ee; }
 
 /* ---------- 5 · faisabilité ---------- */
 
@@ -402,20 +406,22 @@ body {
 
 /* ---------- 6 · impact ---------- */
 
-.impact { position: absolute; left: 146px; right: 146px; top: 228px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
-.impact-card { padding: 34px 34px 36px; border-radius: 16px; background: var(--mist); border: 2px solid var(--line); }
+.impact { position: absolute; left: 146px; right: 146px; top: 236px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+.impact-card { padding: 38px 38px 42px; border-radius: 16px; background: var(--mist); border: 2px solid var(--line); }
 .impact-card header { display: flex; align-items: center; gap: 18px; }
-.impact-card header .ico { font-size: 46px; color: var(--blue); }
+.impact-card header .ico { font-size: 52px; color: var(--blue); }
 .impact-card h3 { font-size: 36px; font-weight: 750; color: var(--blue); letter-spacing: -0.01em; }
 .impact-card ul { list-style: none; margin-top: 30px; display: grid; gap: 26px; }
-.impact-card li { position: relative; padding-left: 30px; font-size: 28px; line-height: 1.3; color: var(--ink); }
+.impact-text { margin-top: 28px; font-size: 32px; line-height: 1.32; color: var(--ink); text-wrap: pretty; }
+.impact-text b { color: var(--blue); }
+.impact-card li { position: relative; padding-left: 30px; font-size: 31px; line-height: 1.3; color: var(--ink); }
 .impact-card li::before { content: ""; position: absolute; left: 0; top: .52em; width: 11px; height: 11px; background: var(--blue); }
 .impact-card li b { color: var(--blue); }
 .biz {
   position: absolute;
   left: 146px;
   right: 146px;
-  top: 724px;
+  top: 640px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   border-radius: 14px;
@@ -560,6 +566,7 @@ body.is-presenter .presenter {
 }
 .p-notes .p-time { display: block; font: 500 14px var(--mono); letter-spacing: .1em; color: var(--stripe-4); margin-bottom: 10px; text-transform: uppercase; }
 .p-notes p + p { margin-top: 12px; }
+.p-notes .src { font: 400 15px/1.5 var(--mono); color: #8fa6bb; border-top: 1px solid #22384f; padding-top: 12px; margin-top: 18px; }
 .p-keys { font: 400 13px var(--mono); color: #6f879d; }
 
 /* ---------- motion & print ---------- */

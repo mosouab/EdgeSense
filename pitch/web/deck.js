@@ -210,7 +210,7 @@
     const s = slides[cur];
     P.no.textContent = `${cur + 1} / ${slides.length} · ${s.dataset.label || ""}`;
     const notes = s.querySelector(".notes");
-    const time = notes?.dataset.time ? `<span class="p-time">${notes.dataset.time} · ${durations[cur]} s</span>` : "";
+    const time = `<span class="p-time">${mmss(ends[cur] - durations[cur])} → ${mmss(ends[cur])} · ${durations[cur]} s</span>`;
     P.notes.innerHTML = time + (notes ? notes.innerHTML : "<p>(pas de notes)</p>");
     P.next.replaceChildren();
     const nxt = slides[cur + 1];

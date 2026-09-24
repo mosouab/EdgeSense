@@ -27,6 +27,7 @@
     <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/> <path d="m9 12 2 2 4-4"/></symbol>
     <symbol id="i-user-check" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/> <circle cx="9" cy="7" r="4"/> <polyline points="16 11 18 13 22 9"/></symbol>
     <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5"/> <path d="M9 8V2"/> <path d="M15 8V2"/> <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
   </defs>
 </svg>
@@ -48,13 +49,13 @@
     <div class="cover">
       <p class="eyebrow" data-reveal style="--d:0">Maintenance prédictive · IA embarquée</p>
       <h1 class="cover-title" data-reveal style="--d:1">Edge<span>Sense</span></h1>
-      <p class="cover-sub" data-reveal style="--d:2">La maintenance prédictive qui se branche sur les automates existants</p>
+      <p class="cover-sub" data-reveal style="--d:2">La maintenance prédictive pour les usines qui n’ont pas d’équipe data</p>
     </div>
     <div class="cover-meta" data-reveal style="--d:3">
       <p><span class="k">Équipe projet&nbsp;: </span><span class="fill-me">Prénom NOM</span></p>
       <p><span class="k">Tuteur&nbsp;: </span><span class="fill-me">Prénom NOM</span></p>
     </div>
-    <aside class="notes" data-time="0:00 → 0:10">
+    <aside class="notes">
       <p>Bonjour, je m’appelle [Prénom]. EdgeSense, c’est un boîtier qui fait de la maintenance prédictive avec les automates qu’une usine a déjà.</p>
     </aside>
   </section>
@@ -91,9 +92,9 @@
       </div>
     </div>
     <p class="story-foot" data-reveal style="--d:6.5">L’usine avait fait l’effort de tout collecter. <b>Il manquait l’étape qui prévient le technicien.</b></p>
-    <aside class="notes" data-time="0:10 → 0:35">
+    <aside class="notes">
       <p>J’ai fait mon stage chez Groupe Bel, au Maroc. L’usine remontait déjà les données de ses machines et de ses automates vers un serveur central, avec des outils Siemens.</p>
-      <p>Mais ces données servaient à afficher des courbes, et c’est tout. Aucune alerte n’en sortait, et le technicien n’avait rien pour voir venir une panne.</p>
+      <p>Mais ces données servaient à afficher des courbes, et c’est tout. Aucune alerte n’en sortait. Je pense que beaucoup de PME et d’ETI en sont là.</p>
     </aside>
   </section>
 
@@ -127,10 +128,19 @@
         <text class="map-name" x="518" y="92" text-anchor="end">Amiral Technologies</text>
         <text class="map-sub" x="518" y="120" text-anchor="end">serveurs + experts pour analyser</text>
 
+        <circle class="map-peer" cx="612" cy="196" r="15"/>
+        <text class="map-name" x="588" y="190" text-anchor="end">Siemens</text>
+        <text class="map-sub" x="588" y="218" text-anchor="end">plateforme cloud (Senseye)</text>
+
         <circle class="map-peer" cx="601" cy="296" r="15"/>
         <text class="map-name" x="577" y="290" text-anchor="end">Augury</text>
         <text class="map-sub" x="577" y="318" text-anchor="end">capteurs dédiés,</text>
         <text class="map-sub" x="577" y="342" text-anchor="end">analyse chez le fournisseur</text>
+
+        <circle class="map-peer" cx="462" cy="470" r="15"/>
+        <text class="map-name" x="486" y="464">Tractian</text>
+        <text class="map-sub" x="486" y="490">capteurs sans fil</text>
+        <text class="map-sub" x="486" y="514">+ cloud</text>
 
         <circle class="map-me-ring" cx="146" cy="466" r="17"/>
         <circle class="map-me" cx="146" cy="466" r="17"/>
@@ -140,9 +150,10 @@
       </svg>
       <p class="map-note">Positionnement indicatif</p>
     </figure>
-    <aside class="notes" data-time="0:35 → 1:05">
-      <p>Des solutions existent, mais elles visent les grands groupes. Augury pose ses propres capteurs et analyse les données chez lui. Amiral Technologies, soutenue par le CNRS, demande des serveurs et des experts pour exploiter ses analyses.</p>
+    <aside class="notes">
+      <p>Des solutions existent, mais elles visent les grands groupes. Augury pose ses propres capteurs et analyse les données chez lui. Amiral Technologies, soutenue par le CNRS, demande des serveurs et des experts. Même Tractian, qui vise des usines plus petites, impose ses capteurs et le cloud.</p>
       <p>Une usine de taille moyenne a des techniciens et des automaticiens. Elle n’a ni équipe data ni ce budget. C’est pour elle que je construis EdgeSense.</p>
+      <p class="src">Placement des concurrents&nbsp;: qualitatif, à vérifier avant le jury. Si le jury cite Tractian&nbsp;: même cible, mais nouveaux capteurs + cloud&nbsp;; EdgeSense lit les automates existants et reste sur site.</p>
     </aside>
   </section>
 
@@ -181,7 +192,7 @@
         <div class="station">
           <div class="badge"><svg class="ico"><use href="#i-monitor"/></svg></div>
           <h3>IHM de l’atelier</h3>
-          <p>alerte + cause probable</p>
+          <p>alerte, cause probable, urgence</p>
         </div>
         <div class="station">
           <div class="badge"><svg class="ico"><use href="#i-clipboard-list"/></svg></div>
@@ -196,30 +207,30 @@
       </div>
     </div>
     <div class="assets">
-      <div class="asset" data-reveal style="--d:4">
-        <svg class="ico"><use href="#i-history"/></svg>
-        <div><h3>Aucun historique de pannes</h3><p>il apprend sur le fonctionnement normal (non supervisé)</p></div>
+      <div class="asset asset--key" data-reveal style="--d:4">
+        <svg class="ico"><use href="#i-plug"/></svg>
+        <div><h3>Atout clé&nbsp;: rien à installer sur les machines, personne à recruter</h3><p>il lit les automates et le réseau déjà en place</p></div>
       </div>
       <div class="asset" data-reveal style="--d:5">
+        <svg class="ico"><use href="#i-history"/></svg>
+        <div><h3>Aucun historique de pannes</h3><p>il apprend le fonctionnement normal</p></div>
+      </div>
+      <div class="asset" data-reveal style="--d:6">
         <svg class="ico"><use href="#i-shield-check"/></svg>
         <div><h3>100&nbsp;% sur site</h3><p>aucune donnée brute ne quitte l’usine</p></div>
       </div>
-      <div class="asset" data-reveal style="--d:6">
-        <svg class="ico"><use href="#i-user-check"/></svg>
-        <div><h3>Pensé pour le technicien</h3><p>il voit quel capteur dérive et quoi vérifier</p></div>
-      </div>
     </div>
-    <aside class="notes" data-time="1:05 → 1:35">
+    <aside class="notes">
       <p>EdgeSense, c’est un boîtier qu’on branche sur les automates existants. Il apprend comment chaque machine se comporte quand tout va bien. Pas besoin d’avoir déjà enregistré des pannes.</p>
-      <p>Quand une mesure dérive, l’alerte s’affiche sur l’IHM que les opérateurs utilisent déjà, avec la cause probable, et le ticket part dans la GMAO. Le technicien confirme ou rejette l’alerte, et le système en tient compte la fois suivante.</p>
+      <p>Quand une mesure dérive, l’alerte s’affiche sur l’IHM que les opérateurs utilisent déjà, avec la cause probable et l’urgence, et le ticket part dans la GMAO. Le technicien confirme ou rejette l’alerte, et le système en tient compte la fois suivante.</p>
     </aside>
   </section>
 
   <!-- 5 · FAISABILITÉ ======================================================= -->
-  <section class="slide" data-label="Faisabilité" data-duration="35">
+  <section class="slide" data-label="Faisabilité" data-duration="36">
     <h2 class="slide-title" data-reveal style="--d:0">Faisabilité&nbsp;: le prototype fonctionne</h2>
     <figure class="proof-shot" data-reveal style="--d:1">
-      <figcaption class="eyebrow">Console opérateur EdgeSense · alerte sur une panne réelle (données rejouées)</figcaption>
+      <figcaption class="eyebrow">Console EdgeSense · fuite d’air du 5 juin 2020 (données réelles rejouées)</figcaption>
       <div class="screen">
         <img src="assets/dashboard-alert-top.webp" width="3200" height="1780" alt="Console EdgeSense en alerte : écart localisé sur la pression de la vanne de régulation, action recommandée, bouton de création d'une demande d'intervention.">
         <span class="pin" style="left:37%;top:33%">1</span>
@@ -255,86 +266,78 @@
       </div>
       <p class="trl-text"><b>TRL&nbsp;4</b>&nbsp;: prototype validé en laboratoire, sur données industrielles réelles</p>
     </div>
-    <aside class="notes" data-time="1:35 → 2:10">
-      <p>Le prototype tourne déjà. Ici, la console est en alerte sur une vraie panne du compresseur du métro de Porto&nbsp;: elle montre la pièce en cause et l’action à faire, et le ticket se crée en un clic.</p>
-      <p>Sur 139 jours de données réelles, EdgeSense a signalé les 4 pannes documentées, avec une fausse alerte tous les dix jours environ. Une analyse prend moins d’une milliseconde sur un seul cœur de processeur, donc un petit boîtier suffit. J’estime qu’on est au TRL 4.</p>
+    <aside class="notes">
+      <p>Le prototype tourne déjà. Ici, la console est en alerte sur la fuite d’air du 5 juin 2020&nbsp;: elle montre la pièce en cause et l’action à faire, et le ticket se crée en un clic.</p>
+      <p>Sur 139 jours de données réelles du métro de Porto, EdgeSense a signalé les 4 pannes documentées, avec une fausse alerte tous les dix jours environ. Une analyse prend moins d’une milliseconde sur un seul cœur de processeur, donc un petit boîtier suffit. J’estime qu’on est au TRL 4.</p>
+      <p class="src">Sources, si le jury demande&nbsp;: 4/4 = les pannes du registre officiel Metro.PT (les 2 événements ajoutés après audit ne sont pas comptés). ~10 jours = 11 épisodes d’alerte hors pannes officielles sur 139 jours de test (un tous les 12,6 jours, arrondi à la baisse). &lt; 1 ms = médiane 0,48 à 0,56 ms sur 1 cœur d’un PC, proxy type Raspberry Pi, pas encore mesuré sur un Pi. Modèle entraîné sur 2 mois de données saines, seuil recalibré sur 2 semaines sur site.</p>
     </aside>
   </section>
 
   <!-- 6 · IMPACT ============================================================ -->
-  <section class="slide" data-label="Impact" data-duration="25">
+  <section class="slide" data-label="Impact" data-duration="22">
     <h2 class="slide-title" data-reveal style="--d:0">Impact</h2>
     <div class="impact">
       <article class="impact-card" data-reveal style="--d:1">
         <header><svg class="ico"><use href="#i-factory"/></svg><h3>Pour l’usine</h3></header>
-        <ul>
-          <li><b>Moins d’arrêts imprévus</b>&nbsp;: on intervient avant la panne, sur un créneau planifié.</li>
-          <li><b>Rien d’autre à installer</b>&nbsp;: le boîtier lit les données que l’usine collecte déjà.</li>
-        </ul>
+        <p class="impact-text"><b>Moins d’arrêts imprévus</b>&nbsp;: on intervient avant la panne, sur un créneau planifié.</p>
       </article>
       <article class="impact-card" data-reveal style="--d:2">
         <header><svg class="ico"><use href="#i-wrench"/></svg><h3>Pour le technicien</h3></header>
-        <ul>
-          <li><b>Des alertes qu’il peut vérifier</b>&nbsp;: le capteur en cause et l’action à faire sont affichés.</li>
-          <li><b>Il garde la main</b>&nbsp;: il confirme ou rejette l’alerte, et le système s’ajuste.</li>
-        </ul>
+        <p class="impact-text"><b>Il sait quoi vérifier</b> avant de se déplacer, et ses retours améliorent le système.</p>
       </article>
       <article class="impact-card" data-reveal style="--d:3">
         <header><svg class="ico"><use href="#i-leaf"/></svg><h3>Pour la société</h3></header>
-        <ul>
-          <li><b>Moins de pertes</b>&nbsp;: de matière pendant les arrêts, d’énergie par les fuites d’air comprimé.</li>
-          <li><b>Les données restent à l’usine</b>&nbsp;: rien ne part dans le cloud.</li>
-        </ul>
+        <p class="impact-text"><b>Moins de pertes</b> de matière et d’énergie (fuites d’air comprimé), et des données qui restent à l’usine.</p>
       </article>
     </div>
     <div class="biz" data-reveal style="--d:4">
       <div><span class="eyebrow">Qui paie&nbsp;?</span>Le responsable maintenance ou le directeur d’usine</div>
       <div><span class="eyebrow">Modèle envisagé</span>Un boîtier + un abonnement par machine surveillée</div>
     </div>
-    <aside class="notes" data-time="2:10 → 2:35">
-      <p>Pour l’usine, ça veut dire moins d’arrêts imprévus, sans rien installer d’autre que le boîtier. Pour le technicien, des alertes qu’il comprend et qu’il peut corriger.</p>
-      <p>On perd aussi moins de matière et d’énergie, par exemple sur les fuites d’air comprimé, et les données ne quittent pas l’usine. Côté modèle économique, j’envisage un boîtier plus un abonnement par machine surveillée.</p>
+    <aside class="notes">
+      <p>Pour l’usine, ça veut dire moins d’arrêts imprévus, sans rien installer d’autre que le boîtier. Le technicien sait quoi vérifier avant de se déplacer.</p>
+      <p>On perd aussi moins de matière et d’énergie, et les données ne quittent pas l’usine. Côté modèle économique, j’envisage un boîtier plus un abonnement par machine surveillée.</p>
     </aside>
   </section>
 
   <!-- 7 · CONCLUSION + BESOIN ============================================== -->
-  <section class="slide" data-label="Conclusion + besoin" data-duration="20">
+  <section class="slide" data-label="Conclusion + besoin" data-duration="23">
     <h2 class="slide-title" data-reveal style="--d:0">Prochaines étapes &amp; besoins</h2>
     <div class="steps">
       <span class="steps-now" data-reveal style="--d:1">Aujourd’hui · TRL 4</span>
       <ol>
-        <li data-n="1" data-reveal style="--d:2"><h3>Connecter de vrais automates</h3><p>OPC UA, Siemens S7&nbsp;: lire en direct une ligne réelle</p></li>
-        <li data-n="2" data-reveal style="--d:3"><h3>Pilote en usine</h3><p>une ligne de production, avec une usine partenaire</p></li>
-        <li data-n="3" data-reveal style="--d:4"><h3>Boîtier embarqué</h3><p>portage sur matériel industriel basse consommation</p></li>
+        <li data-n="1" data-reveal style="--d:2"><h3>Valider le besoin</h3><p>20 entretiens avec des responsables maintenance</p></li>
+        <li data-n="2" data-reveal style="--d:3"><h3>Pilote sur données historiques</h3><p>l’historique d’un vrai site, rejoué dans EdgeSense</p></li>
+        <li data-n="3" data-reveal style="--d:4"><h3>Branchement en direct</h3><p>connecteur OPC UA / Siemens S7, boîtier sur une ligne</p></li>
       </ol>
       <span class="steps-goal" data-reveal style="--d:5">Objectif · TRL 6, démonstration sur site</span>
     </div>
     <aside class="ask" data-reveal style="--d:3">
       <p class="eyebrow">Ce que je recherche</p>
-      <h3>Pour tester en conditions réelles</h3>
+      <h3>Pour passer en usine</h3>
       <ul>
-        <li><svg class="ico"><use href="#i-factory"/></svg><span><b>Une usine pilote</b><br>agroalimentaire ou process</span></li>
-        <li><svg class="ico"><use href="#i-graduation-cap"/></svg><span><b>Un accompagnement</b><br>incubation, mentorat business</span></li>
+        <li><svg class="ico"><use href="#i-factory"/></svg><span><b>Un site pilote</b><br>ses données historiques, puis une ligne</span></li>
+        <li><svg class="ico"><use href="#i-graduation-cap"/></svg><span><b>Un accompagnement</b><br>modèle économique, incubation</span></li>
         <li><svg class="ico"><use href="#i-coins"/></svg><span><b>Un premier financement</b><br>pour le matériel du pilote</span></li>
       </ul>
     </aside>
     <p class="oneliner" data-reveal style="--d:6">EdgeSense&nbsp;: de la maintenance prédictive pour les usines qui n’ont pas d’équipe data.</p>
-    <aside class="notes" data-time="2:35 → 2:55">
-      <p>La suite&nbsp;: brancher de vrais automates, en OPC UA et Siemens S7, faire un pilote sur une ligne de production, puis passer sur un boîtier industriel.</p>
-      <p>Pour ça, il me faut une usine partenaire, un accompagnement et un premier financement pour le matériel.</p>
+    <aside class="notes">
+      <p>La suite, en trois étapes&nbsp;: vingt entretiens avec des responsables maintenance pour valider le besoin, un pilote sur l’historique d’un vrai site, puis le branchement en direct sur une ligne.</p>
+      <p>Pour ça, il me faut un site pilote, un accompagnement sur le modèle économique et un premier financement.</p>
     </aside>
   </section>
 
   <!-- 8 · MERCI ============================================================= -->
-  <section class="slide slide--cover" data-label="Merci" data-duration="5">
+  <section class="slide slide--cover" data-label="Merci" data-duration="4">
     <div class="closing">
       <h2 data-reveal style="--d:0">Merci de votre attention</h2>
       <p class="tag" data-reveal style="--d:1">Think It &amp; Do It</p>
       <p class="contact" data-reveal style="--d:2"><b>EdgeSense</b> · github.com/mosouab/EdgeSense</p>
     </div>
-    <aside class="notes" data-time="2:55 → 3:00">
-      <p>EdgeSense, c’est de la maintenance prédictive pour les usines qui n’ont pas d’équipe data. Merci de votre attention.</p>
-      <p><em>Phrase-pitch (canevas «&nbsp;Oser pour innover&nbsp;»)&nbsp;: Saviez-vous que chez Groupe Bel, au Maroc, les machines envoyaient leurs données vers un serveur central sans qu’aucune alerte n’en sorte&nbsp;? Je développe EdgeSense, un boîtier qui se branche sur les automates existants, pour les équipes de maintenance des usines de taille moyenne. Il apprend le fonctionnement normal de chaque machine, sans historique de pannes, et prévient le technicien avant la panne. Tout tourne sur site. Je cherche une usine partenaire et un accompagnement pour lancer un pilote.</em></p>
+    <aside class="notes">
+      <p>Merci&nbsp;! Je suis à votre disposition pour vos questions.</p>
+      <p class="src">Phrase-pitch (canevas «&nbsp;Oser pour innover&nbsp;»)&nbsp;: Saviez-vous que chez Groupe Bel, au Maroc, les machines envoyaient leurs données vers un serveur central sans qu’aucune alerte n’en sorte&nbsp;? Je développe EdgeSense, un boîtier qui se branche sur les automates existants, pour les équipes de maintenance des usines de taille moyenne. Il apprend le fonctionnement normal de chaque machine, sans historique de pannes, et prévient le technicien avant la panne. Tout tourne sur site. Je cherche une usine partenaire et un accompagnement pour lancer un pilote.</p>
     </aside>
   </section>
 
